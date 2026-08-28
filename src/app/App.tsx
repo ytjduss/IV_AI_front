@@ -334,6 +334,8 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [noiseOk, setNoiseOk] = useState(false);
   const [netOk, setNetOk] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [calibrationProgress, setCalibrationProgress] = useState(0);
+  const [calibrationReady, setCalibrationReady] = useState(false);
   const [speechDone, setSpeechDone] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [ambientLevel, setAmbientLevel] = useState(0);
@@ -433,19 +435,50 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   }, []);
 
   const runTest = async () => {
+    if (testing) return;
     setTesting(true);
-    setVisionStatus("Vision API 확인 중");
+    setCalibrationReady(false);
+    setCalibrationProgress(0);
+    setVisionStatus("5초 캘리브레이션 준비 중");
     try {
       await visionApi.probe();
       setNetOk(true);
       if (!videoRef.current) throw new Error("카메라를 찾을 수 없습니다.");
-      const frame = await captureVideoFrame(videoRef.current);
-      await visionApi.calibrateFrame(sessionIdRef.current, frame);
-      await visionApi.finalizeCalibration(sessionIdRef.current);
-      await visionApi.checkGaze(frame);
-      setVisionStatus("보정 및 시선 확인 완료");
+      let acceptedFrames = 0;
+      for (let index = 0; index < 10; index += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        const frame = await captureVideoFrame(videoRef.current);
+        const result = await visionApi.calibrateFrame(sessionIdRef.current, frame);
+        if (result?.success === true) acceptedFrames += 1;
+        setCalibrationProgress((index + 1) * 10);
+        setVisionStatus(`캘리브레이션 중 · ${index + 1}/10 프레임`);
+      }
+      if (acceptedFrames === 0) throw new Error("기준값으로 사용할 수 있는 프레임이 없습니다.");
+      setCalibrationReady(true);
+      setVisionStatus(`캘리브레이션 준비 완료 · 유효 프레임 ${acceptedFrames}/10`);
     } catch (error) {
       setVisionStatus(error instanceof Error ? error.message : "Vision API 연결에 실패했습니다.");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const startInterview = async () => {
+    if (!calibrationReady) {
+      setVisionStatus("먼저 5초 캘리브레이션을 완료해 주세요.");
+      return;
+    }
+    setTesting(true);
+    setVisionStatus("자세 기준값 확정 중");
+    try {
+      const result = await visionApi.finalizeCalibration(sessionIdRef.current);
+      if (result?.success !== true) {
+        throw new Error(typeof result?.reason === "string" ? result.reason : "자세 기준값을 확정하지 못했습니다.");
+      }
+      setVisionStatus("자세 기준값 확정 완료");
+      onNavigate("interview");
+    } catch (error) {
+      setVisionStatus(error instanceof Error ? error.message : "캘리브레이션 확정에 실패했습니다.");
     } finally {
       setTesting(false);
     }
@@ -498,6 +531,9 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </div>
             </div>
             <p className="text-xs text-muted-foreground mt-2 text-center">{visionStatus}</p>
+            <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
+              <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${calibrationProgress}%` }} />
+            </div>
           </Card>
 
           {/* Status Checks */}
@@ -558,11 +594,12 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
         <div className="flex justify-between gap-3">
           <SecondaryButton onClick={runTest}>
-            <RefreshCw className="w-4 h-4" /> 다시 테스트
+            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {calibrationReady ? "다시 캘리브레이션" : "5초 캘리브레이션 시작"}
           </SecondaryButton>
           <div className="flex gap-3">
             <SecondaryButton onClick={() => onNavigate("job-select")}>이전</SecondaryButton>
-            <PrimaryButton onClick={() => onNavigate("interview")}>
+            <PrimaryButton onClick={startInterview} disabled={!calibrationReady || testing}>
               면접 시작 <ChevronRight className="w-5 h-5" />
             </PrimaryButton>
           </div>
