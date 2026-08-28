@@ -37,7 +37,11 @@ function frameBody(frame: Blob) {
 }
 
 export const visionApi = {
-  healthCheck: () => request("/"),
+  probe: async () => {
+    if (!API_BASE_URL) throw new Error("VITE_API_BASE_URL이 설정되지 않았습니다.");
+    await fetch(API_BASE_URL, { method: "HEAD", mode: "no-cors", cache: "no-store" });
+    return true;
+  },
   calibrateFrame: (sessionId: string, frame: Blob) =>
     request("/vision/calibrate/frame", { method: "POST", body: frameBody(frame) }, { session_id: sessionId }),
   finalizeCalibration: (sessionId: string) =>

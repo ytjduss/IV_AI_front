@@ -329,13 +329,14 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ────────────────────────────────────────────────────────────
 
 function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const [cameraOk, setCameraOk] = useState(true);
-  const [micOk, setMicOk] = useState(true);
-  const [noiseOk, setNoiseOk] = useState(true);
-  const [netOk, setNetOk] = useState(true);
+  const [cameraOk, setCameraOk] = useState(false);
+  const [micOk, setMicOk] = useState(false);
+  const [noiseOk, setNoiseOk] = useState(false);
+  const [netOk, setNetOk] = useState(false);
   const [testing, setTesting] = useState(false);
   const [speechDone, setSpeechDone] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
+  const [ambientLevel, setAmbientLevel] = useState(0);
   const [visionStatus, setVisionStatus] = useState("카메라 연결 중");
   const videoRef = useRef<HTMLVideoElement>(null);
   const sessionIdRef = useRef(`interview-${crypto.randomUUID()}`);
@@ -345,22 +346,75 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   }, []);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setMicLevel(Math.random() * 80 + 10);
-    }, 200);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
     let mediaStream: MediaStream | null = null;
+    let audioContext: AudioContext | null = null;
+    let animationFrame = 0;
+    let ambientTimer = 0;
+    let ambientCollecting = true;
+    const ambientSamples: number[] = [];
+
+    const checkNetwork = async () => {
+      if (!navigator.onLine) return setNetOk(false);
+      try {
+        await visionApi.probe();
+        setNetOk(true);
+      } catch {
+        setNetOk(false);
+      }
+    };
+    const handleOnline = () => void checkNetwork();
+    const handleOffline = () => setNetOk(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    void checkNetwork();
 
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then((stream) => {
         mediaStream = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-        setCameraOk(true);
-        setMicOk(true);
-        setVisionStatus("카메라 준비됨");
+        const videoTrack = stream.getVideoTracks()[0];
+        const audioTrack = stream.getAudioTracks()[0];
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.onloadedmetadata = () => {
+            const hasVideo = Boolean(videoRef.current?.videoWidth && videoRef.current?.videoHeight);
+            setCameraOk(hasVideo && videoTrack?.readyState === "live");
+            setVisionStatus(hasVideo ? "카메라 영상 확인 완료" : "카메라 영상을 확인할 수 없습니다");
+          };
+        }
+        setMicOk(Boolean(audioTrack && audioTrack.readyState === "live" && audioTrack.enabled));
+
+        audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.65;
+        source.connect(analyser);
+        const samples = new Uint8Array(analyser.fftSize);
+
+        const measureAudio = () => {
+          analyser.getByteTimeDomainData(samples);
+          let sumSquares = 0;
+          for (const value of samples) {
+            const normalized = (value - 128) / 128;
+            sumSquares += normalized * normalized;
+          }
+          const rms = Math.sqrt(sumSquares / samples.length);
+          const decibels = 20 * Math.log10(Math.max(rms, 0.00001));
+          const level = Math.max(0, Math.min(100, ((decibels + 60) / 60) * 100));
+          setMicLevel(level);
+          if (ambientCollecting) ambientSamples.push(level);
+          animationFrame = requestAnimationFrame(measureAudio);
+        };
+        measureAudio();
+
+        ambientTimer = window.setTimeout(() => {
+          ambientCollecting = false;
+          const average = ambientSamples.length
+            ? ambientSamples.reduce((sum, value) => sum + value, 0) / ambientSamples.length
+            : 100;
+          setAmbientLevel(Math.round(average));
+          setNoiseOk(average < 35);
+        }, 3000);
       })
       .catch(() => {
         setCameraOk(false);
@@ -368,23 +422,29 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         setVisionStatus("카메라·마이크 권한을 허용해 주세요");
       });
 
-    return () => mediaStream?.getTracks().forEach((track) => track.stop());
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.clearTimeout(ambientTimer);
+      cancelAnimationFrame(animationFrame);
+      void audioContext?.close();
+      mediaStream?.getTracks().forEach((track) => track.stop());
+    };
   }, []);
 
   const runTest = async () => {
     setTesting(true);
     setVisionStatus("Vision API 확인 중");
     try {
-      await visionApi.healthCheck();
+      await visionApi.probe();
+      setNetOk(true);
       if (!videoRef.current) throw new Error("카메라를 찾을 수 없습니다.");
       const frame = await captureVideoFrame(videoRef.current);
       await visionApi.calibrateFrame(sessionIdRef.current, frame);
       await visionApi.finalizeCalibration(sessionIdRef.current);
       await visionApi.checkGaze(frame);
-      setCameraOk(true); setMicOk(true); setNoiseOk(true); setNetOk(true);
       setVisionStatus("보정 및 시선 확인 완료");
     } catch (error) {
-      setNetOk(false);
       setVisionStatus(error instanceof Error ? error.message : "Vision API 연결에 실패했습니다.");
     } finally {
       setTesting(false);
@@ -430,7 +490,7 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 <span className="text-slate-400 text-xs">카메라 권한 허용 후 표시됩니다</span>
               </div>}
               <div className="absolute bottom-3 right-3">
-                <Badge color="green">얼굴 감지됨</Badge>
+                <Badge color={cameraOk ? "green" : "red"}>{cameraOk ? "카메라 정상" : "확인 중"}</Badge>
               </div>
               <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/50 rounded-lg px-2 py-1">
                 <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
@@ -471,7 +531,7 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                   style={{ width: `${micLevel}%` }}
                 />
               </div>
-              <p className="text-xs text-muted-foreground mt-2">말을 해보세요. 막대가 움직이면 정상입니다.</p>
+              <p className="text-xs text-muted-foreground mt-2">실제 마이크 입력입니다. 주변 소음 측정값: {ambientLevel}% · 처음 3초 동안 조용히 있어주세요.</p>
             </Card>
           </div>
         </div>
@@ -526,6 +586,8 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [poseStatus, setPoseStatus] = useState("자세 분석 대기");
   const videoRef = useRef<HTMLVideoElement>(null);
   const sessionIdRef = useRef(sessionStorage.getItem("visionSessionId") ?? `interview-${crypto.randomUUID()}`);
+  const voiceSamplesRef = useRef<number[]>([]);
+  const gazeSamplesRef = useRef<boolean[]>([]);
 
   const questions = [
     "자기소개를 해주세요. 본인의 핵심 역량과 지원 동기를 중심으로 말씀해 주세요.",
@@ -567,6 +629,37 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   }, [camOff, muted]);
 
   useEffect(() => {
+    if (phase !== "answering" || muted) return;
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    const audioTrack = stream?.getAudioTracks()[0];
+    if (!stream || !audioTrack) return;
+
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    const interval = window.setInterval(() => {
+      analyser.getByteTimeDomainData(samples);
+      let sumSquares = 0;
+      for (const value of samples) {
+        const normalized = (value - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / samples.length);
+      const decibels = 20 * Math.log10(Math.max(rms, 0.00001));
+      const level = Math.max(0, Math.min(100, ((decibels + 60) / 60) * 100));
+      voiceSamplesRef.current.push(level);
+    }, 250);
+
+    return () => {
+      window.clearInterval(interval);
+      void audioContext.close();
+    };
+  }, [phase, muted]);
+
+  useEffect(() => {
     if (phase !== "answering" || camOff) return;
     let requesting = false;
 
@@ -575,7 +668,13 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       requesting = true;
       try {
         const frame = await captureVideoFrame(videoRef.current);
-        await visionApi.checkPose(sessionIdRef.current, frame);
+        const [, gazeResult] = await Promise.all([
+          visionApi.checkPose(sessionIdRef.current, frame),
+          visionApi.checkGaze(frame),
+        ]);
+        if (typeof gazeResult?.looking_at_camera === "boolean") {
+          gazeSamplesRef.current.push(gazeResult.looking_at_camera);
+        }
         setPoseStatus("자세 확인됨");
       } catch (error) {
         setPoseStatus(error instanceof Error ? error.message : "자세 분석 실패");
@@ -593,6 +692,15 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const handleDone = () => { setPhase("followup-loading"); setTimeout(() => setPhase("followup"), 2000); setRecording(false); };
   const handleNext = async () => {
     if (qIdx >= questions.length - 1) {
+      const voiceSamples = voiceSamplesRef.current.filter((value) => Number.isFinite(value));
+      const voiceDelivery = voiceSamples.length
+        ? Math.round(voiceSamples.reduce((sum, level) => sum + Math.max(0, 100 - Math.abs(level - 50) * 2), 0) / voiceSamples.length)
+        : null;
+      const gazeSamples = gazeSamplesRef.current;
+      const gazeStability = gazeSamples.length
+        ? Math.round((gazeSamples.filter(Boolean).length / gazeSamples.length) * 100)
+        : null;
+      sessionStorage.setItem("interviewAnalysis", JSON.stringify({ voiceDelivery, gazeStability }));
       try {
         await visionApi.endSession(sessionIdRef.current);
       } catch (error) {
@@ -718,8 +826,8 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
         {/* Webcam */}
         <div className="flex flex-col gap-3 order-1">
-          <Card className="bg-slate-900 border-primary/20 overflow-hidden rounded-2xl shadow-lg shadow-primary/10">
-            <div className="relative h-[clamp(280px,42vh,350px)] bg-slate-950 flex items-center justify-center">
+          <Card className="w-full max-w-3xl mx-auto bg-slate-900 border-primary/20 overflow-hidden rounded-2xl shadow-lg shadow-primary/10">
+            <div className="relative h-[clamp(290px,43vh,360px)] bg-slate-950 flex items-center justify-center">
               {camOff ? (
                 <div className="flex flex-col items-center gap-2">
                   <CameraOff className="w-10 h-10 text-slate-600" />
@@ -728,7 +836,7 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               ) : (
                 <div className="flex flex-col items-center gap-2 w-full h-full">
                   <div className="w-full h-full bg-gradient-to-b from-slate-800 to-slate-900 flex items-center justify-center">
-                    <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-cover" />
+                    <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-contain" />
                   </div>
                 </div>
               )}
@@ -857,16 +965,31 @@ function AnalyzingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ────────────────────────────────────────────────────────────
 
 function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const storedAnalysis = (() => {
+    try {
+      return JSON.parse(sessionStorage.getItem("interviewAnalysis") ?? "{}") as {
+        voiceDelivery?: number | null;
+        gazeStability?: number | null;
+      };
+    } catch {
+      return {};
+    }
+  })();
   const scores = [
-    { label: "답변 내용", score: 78, color: "#0fa99e" },
-    { label: "음성 전달력", score: 82, color: "#34d399" },
-    { label: "시선 안정성", score: 71, color: "#0d9489" },
-    { label: "직무 연관성", score: 88, color: "#6ee7b7" },
+    { label: "답변 내용", score: null, color: "#0fa99e" },
+    { label: "음성 전달력", score: storedAnalysis.voiceDelivery ?? null, color: "#34d399" },
+    { label: "시선 안정성", score: storedAnalysis.gazeStability ?? null, color: "#0d9489" },
+    { label: "직무 연관성", score: null, color: "#6ee7b7" },
   ];
 
-  const overall = Math.round(scores.reduce((a, b) => a + b.score, 0) / scores.length);
+  const measuredScores = scores.flatMap((item) => typeof item.score === "number" ? [item.score] : []);
+  const overall = measuredScores.length
+    ? Math.round(measuredScores.reduce((sum, score) => sum + score, 0) / measuredScores.length)
+    : null;
 
-  const barData = scores.map(s => ({ name: s.label, value: s.score, fill: s.color }));
+  const barData = scores.flatMap((item) => typeof item.score === "number"
+    ? [{ name: item.label, value: item.score, fill: item.color }]
+    : []);
 
   return (
     <div className="min-h-screen bg-background py-10 px-4">
@@ -893,14 +1016,14 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             <p className="text-sm font-semibold text-muted-foreground mb-2">종합 점수</p>
             <div className="relative w-32 h-32">
               <ResponsiveContainer width="100%" height="100%">
-                <RadialBarChart cx="50%" cy="50%" innerRadius="65%" outerRadius="100%" data={[{ value: overall, fill: "#0fa99e" }]} startAngle={90} endAngle={-270}>
+                <RadialBarChart cx="50%" cy="50%" innerRadius="65%" outerRadius="100%" data={[{ value: overall ?? 0, fill: "#0fa99e" }]} startAngle={90} endAngle={-270}>
                   <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
                   <RadialBar dataKey="value" cornerRadius={6} background={{ fill: "#d0f5f1" }} />
                 </RadialBarChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-bold text-foreground">{overall}</span>
-                <span className="text-xs text-muted-foreground">/ 100</span>
+                <span className="text-3xl font-bold text-foreground">{overall ?? "—"}</span>
+                <span className="text-xs text-muted-foreground">{overall === null ? "측정 전" : "/ 100"}</span>
               </div>
             </div>
           </Card>
@@ -908,8 +1031,13 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <Card className="p-6 col-span-1 lg:col-span-2">
             <h3 className="font-bold text-foreground mb-4">항목별 점수</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-              {scores.map((s) => (
+              {scores.map((s) => typeof s.score === "number" ? (
                 <ScoreRing key={s.label} score={s.score} label={s.label} color={s.color} size={76} />
+              ) : (
+                <div key={s.label} className="flex flex-col items-center gap-2">
+                  <div className="w-[76px] h-[76px] rounded-full border-[7px] border-muted flex items-center justify-center text-xl font-bold text-muted-foreground">—</div>
+                  <span className="text-xs text-muted-foreground text-center">{s.label}<br/>분석 데이터 없음</span>
+                </div>
               ))}
             </div>
             <div className="h-32">
@@ -927,49 +1055,6 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          </Card>
-        </div>
-
-        {/* Feedback Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <Card className="p-5 border-emerald-200 bg-emerald-50/50">
-            <div className="flex items-center gap-2 mb-3">
-              <Award className="w-5 h-5 text-emerald-600" />
-              <h3 className="font-bold text-emerald-800 text-sm">가장 잘한 점</h3>
-            </div>
-            <ul className="flex flex-col gap-2">
-              {["직무 연관 경험을 구체적 수치로 제시함", "일관된 시선 처리와 안정적인 음량", "논리적인 답변 구조 (STAR 적용)"].map(t => (
-                <li key={t} className="text-sm text-emerald-700 flex items-start gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />{t}
-                </li>
-              ))}
-            </ul>
-          </Card>
-          <Card className="p-5 border-amber-200 bg-amber-50/50">
-            <div className="flex items-center gap-2 mb-3">
-              <Target className="w-5 h-5 text-amber-600" />
-              <h3 className="font-bold text-amber-800 text-sm">우선 개선점</h3>
-            </div>
-            <ul className="flex flex-col gap-2">
-              {["필러워드 빈도 감소 필요 (12회/분)", "답변 시간 배분 불균형 (Q3 너무 짧음)", "일부 답변에서 결과(Result) 부분 누락"].map(t => (
-                <li key={t} className="text-sm text-amber-700 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />{t}
-                </li>
-              ))}
-            </ul>
-          </Card>
-          <Card className="p-5 border-primary/20 bg-accent/30">
-            <div className="flex items-center gap-2 mb-3">
-              <BookOpen className="w-5 h-5 text-primary" />
-              <h3 className="font-bold text-primary text-sm">추천 연습 항목</h3>
-            </div>
-            <ul className="flex flex-col gap-2">
-              {["STAR 구조 강화 집중 연습", "필러워드 없이 1분 말하기 훈련", "기술 경험 답변 재구성"].map(t => (
-                <li key={t} className="text-sm text-foreground flex items-start gap-2">
-                  <ChevronRight className="w-4 h-4 shrink-0 mt-0.5 text-primary" />{t}
-                </li>
-              ))}
-            </ul>
           </Card>
         </div>
 
@@ -997,6 +1082,25 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 function QuestionAnalysisScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [activeQ, setActiveQ] = useState(0);
+  const questionAnalysisAvailable = false;
+  if (!questionAnalysisAvailable) {
+    return (
+      <div className="min-h-[calc(100vh-5rem)] bg-[#f7faf9] px-4 py-12">
+        <div className="max-w-3xl mx-auto">
+          <button onClick={() => onNavigate("dashboard")} className="text-sm text-muted-foreground hover:text-primary mb-6 flex items-center gap-1">
+            <ChevronRight className="w-4 h-4 rotate-180" /> 결과 대시보드로
+          </button>
+          <Card className="p-12 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-5">
+              <FileText className="w-7 h-7 text-muted-foreground" />
+            </div>
+            <h1 className="text-2xl font-bold text-foreground">질문별 분석 데이터가 없습니다</h1>
+            <p className="text-muted-foreground mt-3">답변 내용 분석 API가 연결되면 질문별 평가가 이곳에 표시됩니다.</p>
+          </Card>
+        </div>
+      </div>
+    );
+  }
   const questions = [
     {
       q: "자기소개를 해주세요. 본인의 핵심 역량과 지원 동기를 중심으로 말씀해 주세요.",
