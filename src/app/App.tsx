@@ -336,7 +336,6 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [testing, setTesting] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [calibrationReady, setCalibrationReady] = useState(false);
-  const [speechDone, setSpeechDone] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [ambientLevel, setAmbientLevel] = useState(0);
   const [visionStatus, setVisionStatus] = useState("카메라 연결 중");
@@ -572,26 +571,6 @@ function DeviceTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </div>
         </div>
 
-        {/* Speech Test */}
-        <Card className="p-6 mb-8">
-          <h3 className="font-bold text-foreground mb-2">기준 문장 읽기</h3>
-          <p className="text-sm text-muted-foreground mb-4">아래 문장을 자연스럽게 읽어 음성 품질을 확인합니다.</p>
-          <div className="bg-accent/40 rounded-xl p-4 mb-4 border border-primary/20">
-            <p className="text-foreground font-medium text-center leading-relaxed">
-              "저는 문제 상황에서 팀원들과 소통하며 최선의 해결책을 찾는 것을 중요하게 생각합니다."
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSpeechDone(true)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${speechDone ? "bg-emerald-50 text-emerald-600 border border-emerald-200" : "bg-primary text-white hover:bg-[#0d9489]"}`}
-            >
-              {speechDone ? <><CheckCircle2 className="w-4 h-4" />완료</> : <><Mic className="w-4 h-4" />읽기 시작</>}
-            </button>
-            {speechDone && <span className="text-sm text-emerald-600 font-medium">음성이 정상적으로 인식되었습니다.</span>}
-          </div>
-        </Card>
-
         <div className="flex justify-between gap-3">
           <SecondaryButton onClick={runTest}>
             {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -627,11 +606,7 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const gazeSamplesRef = useRef<boolean[]>([]);
 
   const questions = [
-    "자기소개를 해주세요. 본인의 핵심 역량과 지원 동기를 중심으로 말씀해 주세요.",
-    "개발 프로젝트에서 가장 어려웠던 기술적 문제와 해결 과정을 설명해 주세요.",
-    "팀 프로젝트에서 갈등이 발생했을 때 어떻게 해결하셨나요?",
-    "5년 후 어떤 개발자가 되고 싶으신가요?",
-    "최근 관심 있게 공부하고 있는 기술 트렌드를 소개해 주세요.",
+    "자기소개를 해주세요. 본인의 핵심 역량을 중심으로 간단히 말씀해 주세요.",
   ];
 
   useEffect(() => {
@@ -1035,7 +1010,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <div>
             <Badge color="mint">면접 완료</Badge>
             <h1 className="text-3xl font-bold text-foreground mt-2">AI 면접 분석 결과</h1>
-            <p className="text-muted-foreground mt-1 text-sm">2025년 1월 14일 · 개발 직군 · 신입 · 5개 질문</p>
+            <p className="text-muted-foreground mt-1 text-sm">API 연결 테스트 면접 · 1개 질문</p>
           </div>
           <div className="flex gap-2">
             <SecondaryButton onClick={() => onNavigate("interview")} size="sm">
