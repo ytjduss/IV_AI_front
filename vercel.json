@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api",
+      "destination": "https://carry-jolly-unicorn.ngrok-free.dev/"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://carry-jolly-unicorn.ngrok-free.dev/:path*"
+    }
+  ]
+}
