@@ -94,13 +94,13 @@ export default function ManagementScreen({
               }
             }}
           >
-            <div className="grid sm:grid-cols-2 gap-6">
+            <div className="grid gap-6">
               {[
                 { key: "name", label: "이름" },
                 { key: "email", label: "이메일" },
                 { key: "job", label: "희망 직무" },
               ].map(({ key, label }) => (
-                <label key={key} className="text-sm font-semibold">
+                <Card key={key} className="text-sm font-semibold">
                   {label}
                   {editing ? (
                     <input
@@ -125,12 +125,9 @@ export default function ManagementScreen({
                       }
                     />
                   ) : (
-                    <p className="text-base mt-3 pb-3 border-b border-border">
-                      {profile[key as keyof typeof profile] ||
-                        "등록된 정보가 없습니다"}
-                    </p>
+                    null
                   )}
-                </label>
+                </Card>
               ))}
             </div>
             <div className="mt-8 flex gap-3">
@@ -226,7 +223,7 @@ export default function ManagementScreen({
           <BookOpen className="mx-auto text-primary mb-5" size={40} />
           <h2 className="text-xl font-bold">등록된 면접 TIP이 없습니다</h2>
           <p className="text-muted-foreground mt-3">
-            새로운 TIP이 등록되면 이곳에서 확인할 수 있어요.
+            새로운 TIP이 등록되면 이곳에 표시됩니다.
           </p>
           <Button className="mt-7" onClick={() => onNavigate("dashboard")}>
             분석 결과로 돌아가기
@@ -262,9 +259,9 @@ export default function ManagementScreen({
                   e.preventDefault();
                   const fields = getResumeFields(draft);
                   const text = resumeToText(fields);
-                  if (!draft.title.trim() || !text) {
+                  if (!text) {
                     setNotice(
-                      "이력서 제목과 한 개 이상의 항목을 작성해 주세요.",
+                      "한 개 이상의 항목을 작성해 주세요.",
                     );
                     return;
                   }
@@ -289,17 +286,7 @@ export default function ManagementScreen({
                   }
                 }}
               >
-                <label className="font-semibold">
-                  이력서 제목
-                  <input
-                    required
-                    className={fieldClass}
-                    value={draft.title}
-                    onChange={(e) =>
-                      setDraft({ ...draft, title: e.target.value })
-                    }
-                  />
-                </label>
+              
                 <div className="mt-7">
                   <ResumeFormFields
                     value={getResumeFields(draft)}
@@ -370,7 +357,7 @@ export default function ManagementScreen({
             </div>
           ) : (
             <Card className="p-16 text-center text-muted-foreground">
-              등록된 이력서가 없습니다. 첫 이력서를 등록해 보세요.
+              등록된 이력서가 없습니다. 
             </Card>
           )}
         </>
@@ -402,9 +389,7 @@ export default function ManagementScreen({
             <div className="text-center py-16">
               <FileText size={36} className="mx-auto mb-4 text-primary" />
               <h2 className="font-bold text-xl">완료한 면접이 없습니다</h2>
-              <p className="text-muted-foreground mt-3">
-                첫 면접을 시작해 나의 성장 기록을 남겨보세요.
-              </p>
+              
               <Button className="mt-6" onClick={() => onNavigate("job-select")}>
                 면접 시작
               </Button>
@@ -417,7 +402,6 @@ export default function ManagementScreen({
           <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
             <h2 className="font-bold">전체 {entries.length}건</h2>
             <Button onClick={() => onNavigate("tips")}>
-              <BookOpen size={18} />
               면접 TIP
             </Button>
           </div>
