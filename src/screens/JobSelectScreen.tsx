@@ -25,22 +25,22 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   );
 
   const jobs = [
-    { id: "디자인", label: "디자인", sub: "UI·UX·시각디자인" },
-    { id: "정보통신", label: "정보통신", sub: "개발·네트워크·보안" },
-    { id: "연구개발", label: "연구개발", sub: "기술연구·제품개발" },
-    { id: "공공서비스", label: "공공서비스", sub: "행정·복지·공공기관" },
-    { id: "영업마케팅", label: "영업마케팅", sub: "영업·브랜드·마케팅" },
-    { id: "경영사무", label: "경영사무", sub: "경영지원·인사·회계" },
-    { id: "생산 관리", label: "생산 관리", sub: "생산·품질·공정관리" },
+    { id: "디자인", label: "디자인"},
+    { id: "정보통신", label: "정보통신"},
+    { id: "연구개발", label: "연구개발"},
+    { id: "공공서비스", label: "공공서비스"},
+    { id: "영업마케팅", label: "영업마케팅"},
+    { id: "경영사무", label: "경영사무"},
+    { id: "생산 관리", label: "생산 관리"},
   ];
 
   return (
     <div className="min-h-[calc(100vh-5rem)] bg-[#f7fcfb] py-14 px-4">
       <div className="max-w-5xl mx-auto">
         <div className="text-center mb-12">
-          <Badge color="mint">STEP 1</Badge>
+          
           <h1 className="text-4xl font-bold text-foreground mt-4">
-            직무를 선택하세요
+            직무선택
           </h1>
         </div>
 
@@ -54,7 +54,6 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <div className="mt-4 text-lg font-bold text-foreground">
                 {j.label}
               </div>
-              <div className="text-xs text-muted-foreground mt-1">{j.sub}</div>
               {selected === j.id && (
                 <div className="mt-3 flex justify-center">
                   <CheckCircle2 className="w-5 h-5 text-primary" />

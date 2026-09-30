@@ -19,7 +19,7 @@ function NavBar({ currentScreen, onNavigate }: { currentScreen: Screen; onNaviga
           </span>
         
 
-        {currentScreen !== "main" && currentScreen !== "login" && !MY_SCREENS.includes(currentScreen) && currentScreen !== "report-detail" && <div className="hidden md:flex items-center gap-2">
+        {currentScreen !== "main" && currentScreen !== "login" &&currentScreen != "signup"&& !MY_SCREENS.includes(currentScreen) && currentScreen !== "report-detail" && <div className="hidden md:flex items-center gap-2">
           {SCREENS.map((s, index) => (
             <button
               key={s}

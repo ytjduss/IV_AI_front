@@ -17,7 +17,7 @@ export const MY_SCREENS: Screen[] = ["profile", "profile-edit", "resume-edit", "
 export const SCREENS: Screen[] = ["job-select", "device-test", "interview", "dashboard"];
 
 export const SCREEN_LABELS: Record<Screen, string> = {
-  "profile-edit": "회원정보 수정", "resume-edit": "이력서 수정", profile: "회원정보 조회", history: "면접 내역", resumes: "이력서 조회", reports: "리포트 목록 조회", "report-detail": "리포트 조회", tips: "면접 TIP",
+  "profile-edit": "회원정보 수정", "resume-edit": "이력서 등록", profile: "회원정보 조회", history: "면접 내역", resumes: "이력서 조회", reports: "리포트 목록 조회", "report-detail": "리포트 조회", tips: "면접 TIP",
   main: "메인",
   login: "로그인",
   "job-select": "직무 선택",

@@ -1,3 +1,4 @@
+import { CAPTURE_MODE } from "./lib/captureMode";
 import { useState } from "react";
 import { NavBar } from "./components/navBar";
 import type { Screen } from "./type/screen";
@@ -20,6 +21,19 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("main");
   const [startWithCameraOff, setStartWithCameraOff] = useState(false);
 
+  const navigate = (next: Screen) => {
+    const requiresLogin = ["job-select", "device-test", "interview"].includes(next);
+    if (!CAPTURE_MODE && requiresLogin && !localStorage.getItem("access_token")) {
+      setScreen("login");
+      return;
+    }
+    // 새 면접 결과 화면에 이전에 선택한 서버 리포트가 남지 않도록 초기화합니다.
+    if (["job-select", "device-test", "interview"].includes(next)) {
+      sessionStorage.removeItem("iv-report-session-id");
+    }
+    setScreen(next);
+  };
+
   const renderScreen = () => {
     switch (screen) {
       case "profile-edit":
@@ -34,32 +48,32 @@ export default function App() {
           <ManagementScreen
             key={screen}
             screen={screen}
-            onNavigate={setScreen}
+            onNavigate={navigate}
           />
         );
       case "main":
-        return <MainScreen onNavigate={(next) => setScreen(next)} />;
+        return <MainScreen onNavigate={navigate} />;
       case "login":
       case "signup":
         return (
           <LoginScreen
             key={screen}
             initialTab={screen}
-            onNavigate={setScreen}
+            onNavigate={navigate}
           />
         );
       case "job-select":
-        return <JobSelectScreen onNavigate={setScreen} />;
+        return <JobSelectScreen onNavigate={navigate} />;
       case "device-test":
         return (
           <DeviceTestScreen
             onNavigate={(next) => {
               setStartWithCameraOff(false);
-              setScreen(next);
+              navigate(next);
             }}
             onStartWithoutCamera={() => {
               setStartWithCameraOff(true);
-              setScreen("interview");
+              navigate("interview");
             }}
           />
         );
@@ -69,16 +83,16 @@ export default function App() {
             initialCameraOff={startWithCameraOff}
             onNavigate={(next) => {
               setStartWithCameraOff(false);
-              setScreen(next);
+              navigate(next);
             }}
           />
         );
       case "analyzing":
-        return <AnalyzingScreen onNavigate={setScreen} />;
+        return <AnalyzingScreen onNavigate={navigate} />;
       case "dashboard":
-        return <DashboardScreen onNavigate={setScreen} />;
+        return <DashboardScreen onNavigate={navigate} />;
       case "question-analysis":
-        return <QuestionAnalysisScreen onNavigate={setScreen} />;
+        return <QuestionAnalysisScreen onNavigate={navigate} />;
     }
   };
 
@@ -88,7 +102,7 @@ export default function App() {
       style={{ fontFamily: "'Pretendard', 'Noto Sans KR', sans-serif" }}
     >
       {screen !== "interview" && screen !== "analyzing" && (
-        <NavBar currentScreen={screen} onNavigate={setScreen} />
+        <NavBar currentScreen={screen} onNavigate={navigate} />
       )}
       {renderScreen()}
     </div>

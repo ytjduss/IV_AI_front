@@ -9,6 +9,8 @@ import { Badge } from "../components/ui/badge";
 import { ResumeFields, resumeToText } from "../type/resume";
 import ResumeFormFields from "../components/resume/ResumeFormFields";
 
+import {login, signup } from "../api/auth";
+
 function LoginScreen({
   onNavigate,
   initialTab = "login",
@@ -20,38 +22,99 @@ function LoginScreen({
   const [enteringResume, setEnteringResume] = useState(false);
   const [resumeFields, setResumeFields] = useState<ResumeFields>({});
   const [notice, setNotice] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  
+  //회원가입 
+  const handleSignup = async (skipResume = false) => {
+    setNotice("");
 
-  const completeSignup = (skipResume = false) => {
-    const text = skipResume ? "" : resumeToText(resumeFields);
+     if (!email.trim() || !password.trim())
+    {
+      setNotice("이메일과 비밀번호를 입력해 주세요.");
+      return;
+    }
+
+    if (password !== passwordConfirm) 
+    {
+      setNotice("비밀번호가 일치하지 않습니다.");
+      return;
+    }
+
     try {
+      //회원가입 API
+      await signup(email.trim(), password);
+
+      const text = skipResume ? "" : resumeToText(resumeFields);
+
       if (text) {
+        //db 연결 필요
         localStorage.setItem(
           "iv-resumes",
-          JSON.stringify([
-            {
-              id: crypto.randomUUID(),
-              title: resumeFields.name?.trim()
-                ? `${resumeFields.name.trim()}의 이력서`
+        JSON.stringify([
+          {
+            id: crypto.randomUUID(),
+            title: resumeFields.name?.trim()
+              ? `${resumeFields.name.trim()}의 이력서`
+              : name.trim()
+                ? `${name.trim()}의 이력서`
                 : "등록한 이력서",
-              text,
-              fields: resumeFields,
-              date: new Date().toISOString(),
-            },
-          ]),
-        );
-      }
-      onNavigate("job-select");
-    } catch {
-      setNotice("이력서를 저장하지 못했습니다. 다시 시도해 주세요.");
+            text,
+            fields: resumeFields,
+            date: new Date().toISOString(),
+          },
+        ]),
+      );
+    }
+
+    onNavigate("job-select");
+    } catch (error){
+      setNotice(
+        error instanceof Error ? error.message : "회원가입 실패.",
+      );
     }
   };
+
+  //로그인
+  const handleLogin = async () => 
+  {
+    setNotice("");
+
+    if (!email.trim() || !password.trim())
+    {
+      setNotice("아이디 또는 비밀번호를 입력해주세요.");
+      return;
+    }
+    try 
+    {
+      const result = await login(
+        email.trim(),
+        password,
+      );
+
+      localStorage.setItem(
+      "access_token",
+      result.access_token,
+    );
+
+    onNavigate("job-select");
+  } catch (error) {
+    setNotice(
+      error instanceof Error
+        ? error.message
+        : "로그인에 실패했습니다.",
+    );
+  }
+};
+
+
+  //화면
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
       <div className={`w-full ${enteringResume ? "max-w-3xl" : "max-w-md"}`}>
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
-            <Video className="w-7 h-7 text-white" />
-          </div>
           <h1 className="text-2xl font-bold text-foreground">IV-Coach</h1>
         </div>
         <Card className="p-8">
@@ -85,19 +148,10 @@ function LoginScreen({
               )}
             </div>
 
-            {tab === "login" && (
-              <div className="text-right mt-2">
-                <button className="text-sm text-primary hover:underline">
-                  비밀번호 찾기
-                </button>
-              </div>
-            )}
-
             {tab === "signup" ? (
               <div className="mt-6 space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  이력서를 입력하면 맞춤형 면접 질문을 준비할 수 있습니다.
-                  나중에 마이페이지에서 등록할 수도 있습니다.
+                  이력서를 입력하면 맞춤형 면접 질문을 생성이 가능합니다.
                 </p>
                 <Button
                   onClick={() => {
@@ -108,14 +162,14 @@ function LoginScreen({
                 >
                   이력서 입력하기 <ChevronRight size={18} />
                 </Button>
-                <Button onClick={() => completeSignup(true)} className="w-full">
+                <Button onClick={() => handleSignup(true)} className="w-full">
                   이력서 없이 진행
                 </Button>
               </div>
             ) : (
               <Button
-                onClick={() => onNavigate("job-select")}
-                className="w-full mt-6"
+                onClick={handleLogin}
+                className="w-full"
               >
                 로그인
               </Button>
@@ -142,11 +196,11 @@ function LoginScreen({
                 >
                   이전
                 </Button>
-                <Button onClick={() => completeSignup(true)}>
+                <Button onClick={() => handleSignup(true)}>
                   이력서 없이 진행
                 </Button>
                 <Button
-                  onClick={() => completeSignup()}
+                  onClick={() => handleSignup()}
                   disabled={!resumeToText(resumeFields).trim()}
                   className="sm:ml-auto"
                 >

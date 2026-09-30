@@ -1,10 +1,14 @@
+import { healthCheck } from "../api/health";
+import { CAPTURE_MODE } from "../lib/captureMode";
 import type { Screen } from "../type/screen";
 import { useEffect, useRef, useState } from "react";
-import { captureVideoFrame, visionApi } from "../app/lib/vision-api";
 import {
-  Activity,
+  captureVideoFrame,
+  visionApi,
+  VisionApiError,
+} from "../app/lib/vision-api";
+import {
   AlertCircle,
-  Badge,
   CameraOff,
   CheckCircle2,
   ChevronRight,
@@ -12,8 +16,13 @@ import {
   RefreshCw,
   Users,
 } from "lucide-react";
+import { Badge } from "../components/ui/badge";
+import CalibrationOverlay from "../components/calibration/CalibrationOverlay";
+import { calibrationMessage, collectCalibration } from "../lib/calibration";
+import type { BodyOutline, TargetZone } from "../type/calibration";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { startAudioSession } from "../api/audio";
 
 function DeviceTestScreen({
   onNavigate,
@@ -22,16 +31,35 @@ function DeviceTestScreen({
   onNavigate: (s: Screen) => void;
   onStartWithoutCamera: () => void;
 }) {
-  const startWithoutCamera = () => {
-    if (!testing) return;
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    stream?.getVideoTracks().forEach((track) => track.stop());
-    onStartWithoutCamera();
+  const startWithoutCamera = async () => {
+    if (CAPTURE_MODE) { onStartWithoutCamera(); return; }
+    if (testing) return;
+    setTesting(true);
+    try {
+      const sessionId = `interview-${crypto.randomUUID()}`;
+      await startAudioSession(sessionId);
+      sessionStorage.setItem("interviewSessionId", sessionId);
+      sessionStorage.removeItem("visionSessionId");
+      const stream = videoRef.current?.srcObject as MediaStream | null;
+      stream?.getVideoTracks().forEach((track) => track.stop());
+      onStartWithoutCamera();
+    } catch (error) {
+      setVisionStatus(
+        error instanceof Error
+          ? error.message
+          : "음성 세션을 시작하지 못했습니다.",
+      );
+    } finally {
+      setTesting(false);
+    }
   };
   const [cameraOK, setCameraOk] = useState(false);
   const [micOk, setMicOk] = useState(false);
   const [noiseOk, setNoiseOk] = useState(false);
-  const [netOk, setNetOk] = useState(false);
+  const [netOk, setNetOk] = useState(navigator.onLine);
+  const [healthStatus, setHealthStatus] = useState<"loading" | "ok" | "error">("loading");
+  const [healthError, setHealthError] = useState("");
+  const [healthAttempt, setHealthAttempt] = useState(0);
   const [testing, setTesting] = useState(false);
   const [calibrationReady, setCalibrationReady] = useState(false);
   const [calibrationFinalized, setCalibrationFinalized] = useState(false);
@@ -41,7 +69,11 @@ function DeviceTestScreen({
   const [micLevel, setMicLevel] = useState(0);
   const [ambientLevel, setAmbientLevel] = useState(0);
   const [visionStatus, setVisionStatus] = useState("카메라 연결 중");
-  const [poseErrorRate, setPoseErrorRate] = useState<number | null>(null);
+  const [frameCount, setFrameCount] = useState(0);
+  const [outline, setOutline] = useState<BodyOutline | null>(null);
+  const [targetZone, setTargetZone] = useState<TargetZone | null>(null);
+  const [videoRatio, setVideoRatio] = useState(16 / 9);
+  const calibrationController = useRef<AbortController | null>(null);
   const [poseFeedback, setPoseFeedback] = useState(
     "카메라 중앙에 얼굴과 양쪽 어깨가 보이도록 앉아 주세요.",
   );
@@ -51,172 +83,54 @@ function DeviceTestScreen({
   const videoRef = useRef<HTMLVideoElement>(null);
   const sessionIdRef = useRef(`interview-${crypto.randomUUID()}`);
 
-  const extractCalibrationMetrics = (result: unknown) => {
-    const metrics: Array<{ label: string; value: number }> = [];
-    const labels: Record<string, string> = {
-      confidence: "감지 신뢰도",
-      detection_confidence: "감지 신뢰도",
-      pose_confidence: "자세 감지 신뢰도",
-      visibility: "가시성",
-      frame_count: "수집 프레임",
-      accepted_frames: "유효 프레임",
-      shoulder_width: "어깨 너비",
-      shoulder_center_x: "어깨 중심 X",
-      shoulder_center_y: "어깨 중심 Y",
-      center_x: "중심 X",
-      center_y: "중심 Y",
-    };
-
-    const visit = (value: unknown, path = "") => {
-      if (!value || typeof value !== "object") return;
-      Object.entries(value as Record<string, unknown>).forEach(
-        ([key, nested]) => {
-          const nextPath = path ? `${path}.${key}` : key;
-          if (typeof nested === "number" && Number.isFinite(nested)) {
-            const normalizedKey = key.toLowerCase();
-            if (
-              ![/timestamp/, /session/, /width$/, /height$/].some((pattern) =>
-                pattern.test(normalizedKey),
-              )
-            ) {
-              metrics.push({
-                label: labels[normalizedKey] ?? nextPath,
-                value: nested,
-              });
-            }
-          } else if (
-            nested &&
-            typeof nested === "object" &&
-            !Array.isArray(nested)
-          ) {
-            visit(nested, nextPath);
-          }
-        },
-      );
-    };
-
-    visit(result);
-    return metrics.slice(0, 6);
-  };
-
-  const formatMetricValue = (label: string, value: number) => {
-    const isRatio =
-      /confidence|visibility|ratio|score/i.test(label) ||
-      /신뢰도|가시성/.test(label);
-    if (isRatio && value >= 0 && value <= 1)
-      return `${(value * 100).toFixed(1)}%`;
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  };
-
-  const findYValues = (result: unknown) => {
-    const values: Record<string, number> = {};
-    const visit = (value: unknown, path = "") => {
-      if (!value || typeof value !== "object") return;
-      Object.entries(value as Record<string, unknown>).forEach(
-        ([key, nested]) => {
-          const nextPath = path ? `${path}.${key}` : key;
-          if (
-            typeof nested === "number" &&
-            Number.isFinite(nested) &&
-            /(^y$|_y$|y_|\.y$)/i.test(key)
-          ) {
-            values[nextPath] = nested;
-          } else if (nested && typeof nested === "object") {
-            visit(nested, nextPath);
-          }
-        },
-      );
-    };
-    visit(result);
-    return values;
-  };
-
-  const findNumericValues = (result: unknown) => {
-    const values: Record<string, number> = {};
-    const visit = (value: unknown, path = "") => {
-      if (!value || typeof value !== "object") return;
-      Object.entries(value as Record<string, unknown>).forEach(
-        ([key, nested]) => {
-          const nextPath = path ? `${path}.${key}` : key;
-          if (typeof nested === "number" && Number.isFinite(nested))
-            values[nextPath] = nested;
-          else if (nested && typeof nested === "object")
-            visit(nested, nextPath);
-        },
-      );
-    };
-    visit(result);
-    return values;
-  };
-
-  const updatePoseFeedback = (result: unknown) => {
-    const numericValues = findNumericValues(result);
-    const entries = Object.entries(numericValues);
-    const findMetric = (patterns: RegExp[]) =>
-      entries.find(([key]) =>
-        patterns.some((pattern) => pattern.test(key)),
-      )?.[1];
-    const explicitError = findMetric([
-      /posture_movement_percent/i,
-      /movement_percent/i,
-      /error_rate/i,
-      /deviation_percent/i,
-      /error_percent/i,
-    ]);
-    const deltaY = findMetric([
-      /delta_y/i,
-      /y_diff/i,
-      /y_offset/i,
-      /vertical.*deviation/i,
-    ]);
-    const deltaX = findMetric([
-      /delta_x/i,
-      /x_diff/i,
-      /x_offset/i,
-      /horizontal.*deviation/i,
-    ]);
-    const normalizedError =
-      explicitError !== undefined
-        ? explicitError <= 1
-          ? explicitError * 100
-          : explicitError
-        : Math.max(Math.abs(deltaY ?? 0), Math.abs(deltaX ?? 0)) * 100;
-    const errorRate = Math.max(0, Math.min(100, normalizedError));
-    setPoseErrorRate(errorRate);
-
-    if (errorRate <= 8) {
-      setPoseFeedbackLevel("good");
-      setPoseFeedback(
-        "현재 자세가 안정적입니다. 시선과 어깨 위치를 그대로 유지하세요.",
-      );
-    } else if (
-      deltaY !== undefined &&
-      Math.abs(deltaY) >= Math.abs(deltaX ?? 0)
-    ) {
-      setPoseFeedbackLevel("adjust");
-      setPoseFeedback(
-        deltaY > 0
-          ? "상체가 기준보다 아래에 있습니다. 허리를 세우고 얼굴과 어깨를 조금 올려 주세요."
-          : "상체가 기준보다 위에 있습니다. 어깨의 힘을 빼고 앉은 위치를 조금 낮춰 주세요.",
-      );
-    } else if (deltaX !== undefined) {
-      setPoseFeedbackLevel("adjust");
-      setPoseFeedback(
-        deltaX > 0
-          ? "몸이 기준보다 오른쪽에 있습니다. 상체를 화면 중앙 쪽으로 조금 옮겨 주세요."
-          : "몸이 기준보다 왼쪽에 있습니다. 상체를 화면 중앙 쪽으로 조금 옮겨 주세요.",
-      );
-    } else {
-      setPoseFeedbackLevel("adjust");
-      setPoseFeedback(
-        "기준 자세와 차이가 큽니다. 허리를 세우고 양쪽 어깨가 수평이 되도록 몸의 흔들림을 줄여 주세요.",
-      );
-    }
-  };
+  useEffect(() => {
+    return () => calibrationController.current?.abort();
+  }, []);
 
   useEffect(() => {
-    sessionStorage.setItem("visionSessionId", sessionIdRef.current);
-  }, []);
+    let controller: AbortController | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
+    // 인터넷 연결 여부와 실제 백엔드 GET / 응답을 구분합니다.
+    const checkNetwork = async () => {
+      controller?.abort();
+      clearTimeout(timer);
+      const current = new AbortController();
+      controller = current;
+      setNetOk(navigator.onLine);
+      setHealthError("");
+      if (!navigator.onLine) {
+        setHealthStatus("error");
+        setHealthError("인터넷 연결을 확인해 주세요.");
+        return;
+      }
+      setHealthStatus("loading");
+      // 응답 없는 서버 때문에 확인 중 상태가 무한히 유지되지 않게 제한합니다.
+      timer = setTimeout(() => current.abort(), 8000);
+      try {
+        await healthCheck(current.signal);
+        if (!disposed && controller === current) setHealthStatus("ok");
+      } catch (error) {
+        if (!disposed && controller === current) {
+          setHealthStatus("error");
+          setHealthError(current.signal.aborted ? "서버 응답 시간이 초과되었습니다." : error instanceof Error ? error.message : "서버 연결에 실패했습니다.");
+        }
+      } finally {
+        if (controller === current) clearTimeout(timer);
+      }
+    };
+    const handleConnection = () => void checkNetwork();
+    window.addEventListener("online", handleConnection);
+    window.addEventListener("offline", handleConnection);
+    void checkNetwork();
+    return () => {
+      disposed = true;
+      controller?.abort();
+      clearTimeout(timer);
+      window.removeEventListener("online", handleConnection);
+      window.removeEventListener("offline", handleConnection);
+    };
+  }, [healthAttempt]);
 
   useEffect(() => {
     let mediaStream: MediaStream | null = null;
@@ -226,21 +140,6 @@ function DeviceTestScreen({
     let ambientTimer = 0;
     let ambientCollecting = true;
     const ambientSamples: number[] = [];
-
-    const checkNetwork = async () => {
-      if (!navigator.onLine) return setNetOk(false);
-      try {
-        await visionApi.probe();
-        setNetOk(true);
-      } catch {
-        setNetOk(false);
-      }
-    };
-    const handleOnline = () => void checkNetwork();
-    const handleOffline = () => setNetOk(false);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    void checkNetwork();
 
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: true })
@@ -258,6 +157,11 @@ function DeviceTestScreen({
             const hasVideo = Boolean(
               videoRef.current?.videoWidth && videoRef.current?.videoHeight,
             );
+            if (hasVideo && videoRef.current) {
+              setVideoRatio(
+                videoRef.current.videoWidth / videoRef.current.videoHeight,
+              );
+            }
             setCameraOk(hasVideo && videoTrack?.readyState === "live");
             setVisionStatus(
               hasVideo
@@ -320,8 +224,6 @@ function DeviceTestScreen({
 
     return () => {
       disposed = true;
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
       window.clearTimeout(ambientTimer);
       cancelAnimationFrame(animationFrame);
       void audioContext?.close();
@@ -330,140 +232,139 @@ function DeviceTestScreen({
   }, []);
 
   const runTest = async () => {
-    if (testing || !cameraOK) return;
+    if (testing || calibrationController.current || !cameraOK) return;
+    const controller = new AbortController();
+    calibrationController.current = controller;
+
+    const sessionId = `interview-${crypto.randomUUID()}`;
+    sessionIdRef.current = sessionId;
+    sessionStorage.removeItem("visionSessionId");
     setTesting(true);
     setCalibrationReady(false);
     setCalibrationFinalized(false);
     setCalibrationMetrics([]);
-    setVisionStatus("5초 측정 준비 중");
+    setFrameCount(0);
+    setOutline(null);
+    setTargetZone(null);
+    setPoseFeedbackLevel("waiting");
+    setPoseFeedback(
+      "어깨 중심을 목표 구역에 맞추고 카메라를 정면으로 바라봐 주세요.",
+    );
+    setVisionStatus("약 5초 동안 자세를 측정합니다.");
+    const timeout = window.setTimeout(
+      () =>
+        controller.abort(
+          new Error(
+            "서버 응답이 지연되고 있습니다. 연결을 확인하고 다시 측정해 주세요.",
+          ),
+        ),
+      30000,
+    );
     try {
-      await visionApi.probe();
-      setNetOk(true);
-      if (!videoRef.current) throw new Error("카메라를 찾을 수 없습니다.");
-      let acceptedFrames = 0;
-      for (let index = 0; index < 10; index += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
-        const frame = await captureVideoFrame(videoRef.current);
-        const result = await visionApi.calibrateFrame(
-          sessionIdRef.current,
-          frame,
-        );
-        // 일부 서버 응답은 HTTP 200이어도 success 필드를 생략한다.
-        // request()가 2xx 응답만 반환하므로 명시적인 실패가 아니면 유효 프레임으로 센다.
-        if (result?.success !== false) {
-          acceptedFrames += 1;
-        }
-        const metrics = extractCalibrationMetrics(result);
-        if (metrics.length > 0) setCalibrationMetrics(metrics);
-        setVisionStatus("측정 중입니다. 자세를 유지해 주세요.");
-      }
-      if (acceptedFrames === 0)
-        throw new Error("기준값으로 사용할 수 있는 프레임이 없습니다.");
-      setVisionStatus("자세 기준값 확정 및 check 요청 중");
-      const finalized = await visionApi.finalizeCalibration(
-        sessionIdRef.current,
-      );
-      if (finalized?.success === false) {
-        throw new Error(
-          typeof finalized?.reason === "string"
-            ? finalized.reason
-            : "자세 기준값을 확정하지 못했습니다.",
-        );
-      }
+      // 프레임 당 측정임
+      const baseline = await collectCalibration({
+        signal: controller.signal,
+        sendFrame: async () => {
+          if (!videoRef.current) throw new Error("카메라를 찾을 수 없습니다.");
+
+          const frame = await captureVideoFrame(videoRef.current);
+          controller.signal.throwIfAborted();
+
+          return visionApi.calibrateFrame(sessionId, frame, controller.signal);
+        },
+
+        onFrame: (result) => {
+          setNetOk(true);
+
+          //서버 frame_count
+          setFrameCount(result.frame_count);
+          //body outline
+          setOutline(result.body_outline ?? null);
+          //target_zone (기준)
+          setTargetZone(result.target_zone ?? null);
+
+          const accepted = !result.reason && result.success !== false;
+
+          //피드백 레벨 설정.. (나중에)
+          setPoseFeedbackLevel(accepted ? "good" : "adjust");
+          //피드백 연결 하기
+          setPoseFeedback(
+            result.reason
+              ? calibrationMessage(result.reason)
+              : accepted
+                ? "카메라를 바라보며 현재 자세를 유지해 주세요."
+                : "얼굴과 어깨 위치를 확인하고 카메라를 바라봐 주세요.",
+          );
+        },
+        finalize: () => {
+          setVisionStatus("수집한 프레임으로 기준 자세를 정하는 중");
+          //finalize 추가 해야됨
+          return visionApi.finalizeCalibration(sessionId, controller.signal);
+        },
+      });
+      sessionStorage.setItem("visionSessionId", sessionId);
+      setCalibrationMetrics([
+        { label: "어깨 기울기", value: baseline.shoulder_tilt },
+        { label: "목 전방 비율", value: baseline.neck_forward_ratio },
+        { label: "어깨 너비", value: baseline.shoulder_width },
+      ]);
       setCalibrationFinalized(true);
-
-      console.info("[장비 테스트] 기준값 확정 완료 · 프레임별 자세 check 시작");
-      let poseCheckResult: Record<string, unknown> | null = null;
-      for (let index = 0; index < 10; index += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
-        const checkFrame = await captureVideoFrame(videoRef.current);
-        try {
-          poseCheckResult = await visionApi.checkPose(
-            sessionIdRef.current,
-            checkFrame,
-          );
-          updatePoseFeedback(poseCheckResult);
-          console.info(
-            `[장비 테스트] 확정 후 프레임 ${index + 1}/10 자세 check`,
-            {
-              yValues: findYValues(poseCheckResult),
-              numericValues: findNumericValues(poseCheckResult),
-              data: poseCheckResult,
-            },
-          );
-          console.info(
-            `[장비 테스트 RAW] 프레임 ${index + 1}/10 /vision/check\n${JSON.stringify(poseCheckResult, null, 2)}`,
-          );
-        } catch (checkError) {
-          console.error(
-            `[장비 테스트] 확정 후 프레임 ${index + 1}/10 자세 check 실패`,
-            checkError,
-          );
-        }
-      }
-
-      const gazeFrame = await captureVideoFrame(videoRef.current);
-      let visionCheckResult: Record<string, unknown> | null = null;
-      try {
-        visionCheckResult = await visionApi.checkGaze(
-          sessionIdRef.current,
-          gazeFrame,
-        );
-        console.info(
-          "[장비 테스트] 시선 check (/vision/gaze-check) 결과",
-          visionCheckResult,
-        );
-      } catch (gazeError) {
-        console.error(
-          "[장비 테스트] 시선 check (/vision/gaze-check) 실패",
-          gazeError,
-        );
-      }
-      const checkMetrics = [
-        ...extractCalibrationMetrics(poseCheckResult),
-        ...extractCalibrationMetrics(visionCheckResult),
-      ].slice(0, 6);
-      if (checkMetrics.length > 0) setCalibrationMetrics(checkMetrics);
       setCalibrationReady(true);
+      setPoseFeedbackLevel("good");
+      setPoseFeedback(
+        "기준 자세가 저장되었습니다. 면접 중에도 이 자세를 유지해 주세요.",
+      );
       setVisionStatus("장비 테스트 완료");
     } catch (error) {
-      setVisionStatus(
-        error instanceof Error
-          ? error.message
-          : "Vision API 연결에 실패했습니다.",
-      );
+      // Navigation/unmount cancellation must not update an obsolete screen.
+      if (
+        controller.signal.aborted &&
+        controller.signal.reason?.name === "AbortError"
+      )
+        return;
+      const data = error instanceof VisionApiError ? error.data : null;
+      const detail = data?.detail;
+      const reason =
+        data?.reason ??
+        (detail && typeof detail === "object"
+          ? (detail as Record<string, unknown>).reason
+          : detail);
+      const message =
+        typeof reason === "string"
+          ? calibrationMessage(reason)
+          : error instanceof Error
+            ? error.message
+            : "자세 측정에 실패했습니다. 다시 측정해 주세요.";
+      setVisionStatus(message);
+      setPoseFeedback(message);
+      setPoseFeedbackLevel("adjust");
     } finally {
-      setTesting(false);
+      window.clearTimeout(timeout);
+      if (calibrationController.current === controller) {
+        calibrationController.current = null;
+        if (
+          !controller.signal.aborted ||
+          controller.signal.reason?.name !== "AbortError"
+        )
+          setTesting(false);
+      }
     }
   };
 
   const startInterview = async () => {
-    if (!calibrationReady) {
-      setVisionStatus("먼저 5초 캘리브레이션을 완료해 주세요.");
-      return;
-    }
+    if (CAPTURE_MODE) { onNavigate("interview"); return; }
+    if (testing || !calibrationReady || !calibrationFinalized) return;
     setTesting(true);
     setVisionStatus("면접 화면 준비 중");
     try {
-      if (!calibrationFinalized) {
-        const result = await visionApi.finalizeCalibration(
-          sessionIdRef.current,
-        );
-        if (result?.success === false) {
-          throw new Error(
-            typeof result?.reason === "string"
-              ? result.reason
-              : "자세 기준값을 확정하지 못했습니다.",
-          );
-        }
-      }
-      setVisionStatus("자세 기준값 확정 완료");
+      await startAudioSession(sessionIdRef.current);
+      sessionStorage.setItem("interviewSessionId", sessionIdRef.current);
       onNavigate("interview");
     } catch (error) {
       setVisionStatus(
         error instanceof Error
           ? error.message
-          : "캘리브레이션 확정에 실패했습니다.",
+          : "면접 준비에 실패했습니다. 다시 시도.",
       );
     } finally {
       setTesting(false);
@@ -480,8 +381,12 @@ function DeviceTestScreen({
   return (
     <div className="min-h-screen bg-background py-12 px-4">
       <div className="max-w-5xl mx-auto">
+        <Card className="p-4 mb-6" aria-busy={healthStatus === "loading"}>
+          <p role="status">백엔드 서버: {healthStatus === "loading" ? "확인 중" : healthStatus === "ok" ? "정상 연결" : "연결 확인 필요"}</p>
+          {healthError && <p role="alert" className="mt-2 text-red-600">{healthError}</p>}
+          <Button className="mt-3" variant="outline" disabled={healthStatus === "loading"} onClick={() => setHealthAttempt((attempt) => attempt + 1)}>서버 연결 재검사</Button>
+        </Card>
         <div className="mb-10 text-center">
-          <Badge color="mint">STEP 2</Badge>
           <h1 className="text-4xl font-bold text-foreground mt-3">
             장비 테스트
           </h1>
@@ -497,24 +402,18 @@ function DeviceTestScreen({
                 웹캠 끄고 면접 진행하기
               </Button>
             </div>
-            <div className="relative aspect-video min-h-[420px] bg-slate-900 rounded-2xl overflow-hidden flex items-center justify-center">
+            <div
+              className="relative bg-slate-900 rounded-none overflow-hidden flex items-center justify-center"
+              style={{ aspectRatio: videoRatio }}
+            >
               <video
                 ref={videoRef}
                 autoPlay
                 muted
                 playsInline
-                className="absolute inset-0 w-full h-full object-cover"
+                className="absolute inset-0 w-full h-full object-contain"
               />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-40 h-48 border-2 border-primary/60 rounded-full opacity-60" />
-                <div className="absolute w-32 h-32 border border-primary/40 rounded-full" />
-                <div className="absolute">
-                  <div className="w-4 h-4 border-t-2 border-l-2 border-primary absolute -top-16 -left-16" />
-                  <div className="w-4 h-4 border-t-2 border-r-2 border-primary absolute -top-16 -right-16" />
-                  <div className="w-4 h-4 border-b-2 border-l-2 border-primary absolute top-8 -left-16" />
-                  <div className="w-4 h-4 border-b-2 border-r-2 border-primary absolute top-8 -right-16" />
-                </div>
-              </div>
+              <CalibrationOverlay outline={outline} targetZone={targetZone} />
               {!cameraOK && (
                 <div className="relative z-10 flex flex-col items-center gap-2">
                   <div className="w-20 h-20 rounded-full bg-slate-700 flex items-center justify-center">
@@ -535,8 +434,15 @@ function DeviceTestScreen({
                 <span className="text-white text-xs">LIVE</span>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-2 text-center">
+            <p
+              role="status"
+              className="text-xs text-muted-foreground mt-2 text-center"
+            >
               {visionStatus}
+            </p>
+            <p className="text-xs text-muted-foreground mt-2 text-center">
+              유효 프레임 {frameCount}개 · 점선 구역에 노란색 어깨 중심점을 맞춰
+              주세요.
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
               {calibrationMetrics
@@ -558,7 +464,7 @@ function DeviceTestScreen({
                       {metric.label}
                     </p>
                     <p className="text-sm font-bold text-foreground">
-                      {formatMetricValue(metric.label, metric.value)}
+                      {metric.value.toFixed(3)}
                     </p>
                   </div>
                 ))}
@@ -638,10 +544,13 @@ function DeviceTestScreen({
             {calibrationReady ? "다시 측정" : "5초 측정 시작"}
           </Button>
           <div className="flex gap-3">
-            <Button onClick={() => onNavigate("job-select")}>이전</Button>
+            <Button disabled={testing} onClick={() => onNavigate("job-select")}>
+              이전
+            </Button>
+
             <Button
               onClick={startInterview}
-              disabled={!calibrationReady || testing}
+              disabled={!CAPTURE_MODE && (!calibrationReady || testing)}
             >
               면접 시작 <ChevronRight className="w-5 h-5" />
             </Button>

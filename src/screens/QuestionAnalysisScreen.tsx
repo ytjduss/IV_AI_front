@@ -1,3 +1,6 @@
+import { Button } from "../components/ui/button";
+import VisionSummaryCard from "../components/analysis/VisionSummaryCard";
+import type { InterviewAnalysis } from "../type/vision";
 import type { Screen } from "../type/screen";
 import { useState } from "react";
 import { Mic, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
@@ -11,6 +14,45 @@ export default function QuestionAnalysisScreen({
   onNavigate: (s: Screen) => void;
 }) {
   const [activeQ, setActiveQ] = useState(0);
+  let analysis: InterviewAnalysis | null = null;
+  try {
+    analysis = JSON.parse(
+      sessionStorage.getItem("interviewAnalysis") ?? "null",
+    );
+  } catch {}
+  if (analysis && Array.isArray(analysis.answerSummaries)) {
+    return (
+      <main className="max-w-5xl mx-auto px-4 py-10 space-y-6">
+        <Button onClick={() => onNavigate("dashboard")}>
+          전체 분석 결과로 돌아가기
+        </Button>
+        <h1 className="text-2xl font-bold">질문별 자세·시선 분석</h1>
+        {analysis.answerSummaries.length === 0 && (
+          <p>저장된 답변 분석이 없습니다.</p>
+        )}
+        {analysis.answerSummaries.map((answer) => (
+          <section key={answer.questionIndex} className="space-y-3">
+            <h2 className="font-bold">
+              Q{answer.questionIndex + 1}. {answer.question}
+            </h2>
+            <VisionSummaryCard
+              summary={answer.vision}
+              title="답변 구간 분석"
+              emptyMessage={
+                answer.visionError ?? "카메라 측정 데이터가 없습니다."
+              }
+            />
+            {answer.audioError && (
+              <p className="text-sm text-amber-700">
+                음성 분석: {answer.audioError}
+              </p>
+            )}
+          </section>
+        ))}
+      </main>
+    );
+  }
+
   const questions = [
     {
       q: "자기소개를 해주세요. 본인의 핵심 역량과 지원 동기를 중심으로 말씀해 주세요.",
@@ -131,7 +173,7 @@ export default function QuestionAnalysisScreen({
               </div>
               <div className="mt-7 rounded-none border border-border bg-muted/30 p-5">
                 <div className="flex items-center gap-2 text-sm font-bold">
-                 STT 변환 답변
+                  STT 변환 답변
                 </div>
                 <p className="text-foreground leading-relaxed">{q.answer}</p>
               </div>
