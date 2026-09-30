@@ -1,4 +1,3 @@
-import { updateResume } from "../api/resume";
 import { INTERVIEW_TIPS } from "../data/interviewTips";
 import type { Screen } from "../type/screen";
 import { useEffect, useState } from "react";
@@ -10,12 +9,20 @@ import { MY_SCREENS, SCREEN_LABELS } from "../type/screen";
 import ResumeFormFields from "../components/resume/ResumeFormFields";
 import { resumeToText, getResumeFields } from "../type/resume";
 import { readLocal } from "../lib/storage";
-import { ReportList, ServerReport, selectedReportSessionId } from "../components/analysis/ServerReport";
+import { getReports } from "../lib/reports";
+import { EXAMPLE_REPORT } from "../data/exampleReport";
 import { EXAMPLE_RESUME } from "../data/exampleResume";
-import { getMyInfo, updateMyInfo, deleteAccount, logout, type MyInfo } from "../api/auth";
+import { getMyInfo, logout, type MyInfo } from "../api/auth";
 
-import { getMyInterviewSessions, type MyInterviewSession } from "../api/interview";
-import { clearAccountStorage } from "../lib/storage";
+// 회원정보 조회 API 임시 해제. 재연결 시 true로 
+const PROFILE_API_ENABLED = true;
+const EXAMPLE_MY_INFO: MyInfo = {
+  user_id: 1001,
+  email: "hong@example.com",
+  created_at: "2026-09-01T10:00:00+09:00",
+};
+
+
 
 export default function ManagementScreen({
   screen,
@@ -28,28 +35,28 @@ export default function ManagementScreen({
     readLocal("iv-profile", { name: "", email: "", job: "" }),
   );
   const [editing, setEditing] = useState(screen === "profile-edit");
-  const [myInfo, setMyInfo] = useState<MyInfo | null>(null);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [actionError, setActionError] = useState("");
-  const [infoLoading, setInfoLoading] = useState(screen === "profile" || screen === "profile-edit");
+  const [myInfo, setMyInfo] = useState<MyInfo | null>(
+    PROFILE_API_ENABLED ? null : EXAMPLE_MY_INFO,
+  );
+  const [infoLoading, setInfoLoading] = useState(PROFILE_API_ENABLED && screen === "profile");
   const [infoError, setInfoError] = useState("");
   const [infoAttempt, setInfoAttempt] = useState(0);
 
   useEffect(() => {
-    if (screen !== "profile" && screen !== "profile-edit") return;
+    if (screen !== "profile") return;
+    if (!PROFILE_API_ENABLED) {
+      setInfoLoading(false);
+      setInfoError("");
+      setMyInfo(EXAMPLE_MY_INFO);
+      return;
+    }
     const controller = new AbortController();
     setInfoLoading(true);
     setInfoError("");
     setMyInfo(null);
     getMyInfo(controller.signal)
       .then((data) => {
-        if (!controller.signal.aborted) {
-          setMyInfo(data);
-          setEmail(data.email);
-        }
+        if (!controller.signal.aborted) setMyInfo(data);
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
@@ -61,43 +68,38 @@ export default function ManagementScreen({
       });
     return () => controller.abort();
   }, [screen, infoAttempt]);
-  const [sessions, setSessions] = useState<MyInterviewSession[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(screen === "history");
-  const [sessionsError, setSessionsError] = useState("");
-  const [sessionsAttempt, setSessionsAttempt] = useState(0);
-
-  // 화면 이동/재시도 시 이전 조회를 취소하여 늦게 온 응답이 덮어쓰지 않게 합니다.
-  useEffect(() => {
-    if (screen !== "history") return;
-    const controller = new AbortController();
-    setSessionsLoading(true);
-    setSessionsError("");
-    getMyInterviewSessions(controller.signal)
-      .then((data) => { if (!controller.signal.aborted) setSessions(data); })
-      .catch((error) => {
-        if (!controller.signal.aborted) setSessionsError(error instanceof Error ? error.message : "면접 내역을 조회하지 못했습니다.");
-      })
-      .finally(() => { if (!controller.signal.aborted) setSessionsLoading(false); });
-    return () => controller.abort();
-  }, [screen, sessionsAttempt]);
-
   const [notice, setNotice] = useState("");
   const [withdraw, setWithdraw] = useState(false);
   const [resumes, setResumes] = useState<any[]>(() =>
     readLocal<any[]>("iv-resumes", []).slice(0, 1),
   );
   const [draft, setDraft] = useState<any>(null);
-  const [resumeSaving, setResumeSaving] = useState(false);
-  const [resumeError, setResumeError] = useState("");
   const displayedResumes = resumes.length || screen !== "resumes" ? resumes : [EXAMPLE_RESUME];
   const [viewResume, setViewResume] = useState<any>(null);
+  const reports = getReports();
+  const entries =
+    screen === "reports" || screen === "report-detail"
+      ? [
+          ...reports.filter((item) => item.id !== EXAMPLE_REPORT.id),
+          EXAMPLE_REPORT,
+        ]
+      : reports;
+  const selectedId = sessionStorage.getItem("iv-selected-report");
+  const selected = selectedId
+    ? entries.find((item) => item.id === selectedId)
+    : entries[0];
   const fieldClass =
     "w-full border border-border rounded-none px-4 py-3 bg-white mt-2";
-  // 서버 상세 조회는 리포트 번호가 아닌 목록의 세션 번호를 사용합니다.
-  const openReport = (sessionId: number) => {
-    sessionStorage.setItem("iv-report-session-id", String(sessionId));
-    onNavigate("dashboard");
+  const navigateReport = (entry: any, destination: Screen) => {
+    sessionStorage.setItem(
+      "interviewAnalysis",
+      JSON.stringify(entry.analysis ?? null),
+    );
+    sessionStorage.setItem("iv-current-id", entry.id);
+    sessionStorage.setItem("iv-selected-report", entry.id);
+    onNavigate(destination);
   };
+
 
   //로그아웃
   const handleLogout = async() =>
@@ -115,86 +117,6 @@ export default function ManagementScreen({
     }
   }
 
-  const handleUpdateProfile = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (saving || deleting || !myInfo) return;
-    setActionError("");
-    // PATCH는 변경한 필드만 전달합니다. 빈 비밀번호는 기존 비밀번호 유지입니다.
-    const payload: { email?: string; password?: string } = {};
-    if (email.trim() !== myInfo.email) payload.email = email.trim();
-    if (password) payload.password = password;
-    if (!Object.keys(payload).length) {
-      setActionError("변경할 이메일 또는 비밀번호를 입력해 주세요.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateMyInfo(payload);
-      setPassword("");
-      // 저장 성공 후 조회 화면을 다시 열어 서버의 최신 정보를 가져옵니다.
-      // 비밀번호는 브라우저 저장소에 저장하지 않습니다.
-      setEditing(false);
-      onNavigate("profile");
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "회원정보 수정에 실패했습니다.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDeleteAccount = async () => {
-    if (deleting || saving) return;
-    setDeleting(true);
-    setActionError("");
-    try {
-      await deleteAccount();
-    } catch (error) {
-      // 서버 탈퇴 실패 시 토큰과 사용자 데이터를 보존하여 다시 시도할 수 있게 합니다.
-      setActionError(error instanceof Error ? error.message : "회원 탈퇴에 실패했습니다.");
-      setDeleting(false);
-      return;
-    }
-    clearAccountStorage();
-    onNavigate("login");
-  };
-
-  const handleSaveResume = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!draft || resumeSaving) return;
-    setResumeError("");
-    setNotice("");
-    const fields = getResumeFields({ ...draft, text: draft.text ?? draft.content });
-    const content = resumeToText(fields);
-    if (!content.trim()) {
-      setResumeError("한 개 이상의 항목을 작성해 주세요.");
-      return;
-    }
-    const hasServerId = draft.resume_id != null;
-    setResumeSaving(true);
-    try {
-      // UC-23: 입력 필드를 전문으로 변환하여 PUT /resume/{resume_id}에 전달합니다.
-      // 서버 등록/조회로 받은 ID만 사용하며 로컬 UUID는 전송하지 않습니다.
-      if (hasServerId) await updateResume(draft.resume_id, content);
-    } catch (error) {
-      // 실패하면 편집 내용과 기존 저장 데이터를 유지하여 재시도할 수 있게 합니다.
-      setResumeError(error instanceof Error ? error.message : "이력서 수정에 실패했습니다.");
-      setResumeSaving(false);
-      return;
-    }
-    const next = [{ ...draft, title: (draft.title ?? "").trim(), text: content,
-      content, fields, date: new Date().toISOString() }];
-    try {
-      // 서버 수정 성공 이후 캐시를 갱신하며 resume_id도 함께 보관합니다.
-      localStorage.setItem("iv-resumes", JSON.stringify(next));
-      setNotice(hasServerId ? "이력서가 서버에 수정 저장되었습니다." : "이력서를 이 브라우저에 저장했습니다. 서버 등록은 아직 연결되지 않았습니다.");
-    } catch {
-      setNotice(hasServerId ? "서버 수정은 완료했지만 브라우저 저장 공간이 부족해 로컬 사본을 갱신하지 못했습니다." : "브라우저 저장 공간이 부족하여 저장하지 못했습니다.");
-      if (!hasServerId) { setResumeSaving(false); return; }
-    }
-    setResumes(next);
-    setDraft(null);
-    setResumeSaving(false);
-  };
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-10 sm:py-14">
@@ -219,7 +141,6 @@ export default function ManagementScreen({
       </p>
       {notice && (
         <p role="status" className="bg-accent rounded-none p-4 mb-5 text-primary">
-          {notice}
         </p>
       )}
       {(screen === "profile" || screen === "profile-edit") && (
@@ -227,7 +148,7 @@ export default function ManagementScreen({
           <div className="flex ">
             <h2 className="font-bold text-xl">내 정보</h2>
           </div>
-          {(!editing || infoLoading || infoError) && (
+          {!editing && (
             <div aria-busy={infoLoading}>
               {infoLoading && <p role="status">회원정보를 불러오는 중입니다.</p>}
               {infoError && (
@@ -237,7 +158,7 @@ export default function ManagementScreen({
                   <Button variant="outline" onClick={() => onNavigate("login")}>로그인</Button>
                 </div>
               )}
-              {myInfo && !editing && (
+              {myInfo && (
                 <dl className="grid gap-6">
                   {[
                     ["이메일", myInfo.email],
@@ -254,36 +175,64 @@ export default function ManagementScreen({
               )}
             </div>
           )}
-          {actionError && <p role="alert" className="mt-4 text-red-600">{actionError}</p>}
-          <form onSubmit={handleUpdateProfile}>
-            {editing && (
-              <fieldset disabled={saving || deleting || infoLoading || !myInfo} className="grid gap-6 mt-6">
-                <label className="text-sm font-semibold">
-                  이메일
-                  <input required type="email" autoComplete="email" className={fieldClass}
-                    value={email} onChange={(event) => setEmail(event.target.value)} />
-                </label>
-                <label className="text-sm font-semibold">
-                  새 비밀번호
-                  <input type="password" autoComplete="new-password" className={fieldClass}
-                    placeholder="변경할 때만 입력해 주세요" value={password}
-                    onChange={(event) => setPassword(event.target.value)} />
-                </label>
-              </fieldset>
-            )}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              try {
+                localStorage.setItem("iv-profile", JSON.stringify(profile));
+                setEditing(false);
+                onNavigate("profile");
+              } catch {
+                setNotice("저장 공간이 부족합니다."); 
+              }
+            }}
+          >
+            <div className="grid gap-6">
+              {(editing ? [
+                { key: "name", label: "이름" },
+                { key: "job", label: "희망 직무" },
+              ] : []).map(({ key, label }) => (
+                <Card key={key} className="text-sm font-semibold">
+                  {label}
+                  {editing ? (
+                    <input
+                      required={key !== "job"}
+                      type="text"
+                      placeholder={
+                        readLocal("iv-profile", {
+                          name: "홍길동",
+                          email: "hong@example.com",
+                          job: "프론트엔드 개발자",
+                        })[key as keyof typeof profile] ||
+                        {
+                          name: "홍길동",
+                          email: "hong@example.com",
+                          job: "프론트엔드 개발자",
+                        }[key as keyof typeof profile]
+                      }
+                      className={fieldClass}
+                      value={profile[key as keyof typeof profile]}
+                      onChange={(e) =>
+                        setProfile({ ...profile, [key]: e.target.value })
+                      }
+                    />
+                  ) : (
+                    null
+                  )}
+                </Card>
+              ))}
+            </div>
             <div className="mt-8 flex gap-3">
               {editing ? (
                 <>
                   <button
                     type="submit"
-                    disabled={saving || deleting || infoLoading || !myInfo}
                     className="bg-primary text-white rounded-none px-6 py-3 font-semibold"
                   >
-                    {saving ? "저장 중..." : "저장"}
+                    저장
                   </button>
                   <button
                     type="button"
-                    disabled={saving || deleting}
                     onClick={() => {
                       setProfile(
                         readLocal("iv-profile", {
@@ -313,7 +262,7 @@ export default function ManagementScreen({
           </form>
           {editing && (
             <div className=" flex flex-col items-end">
-              <button disabled={saving || deleting} className = "font-size-sm" onClick = {handleLogout}
+              <button className = "font-size-sm" onClick = {handleLogout}
               >
                 로그아웃
               </button>
@@ -323,8 +272,7 @@ export default function ManagementScreen({
               <br></br>
 
               <button
-                disabled={saving || deleting}
-                onClick={() => { setActionError(""); setWithdraw(true); }}
+                onClick={() => setWithdraw(true)}
                 className="text-sm text-red-500"
               >
                 회원 탈퇴
@@ -336,19 +284,33 @@ export default function ManagementScreen({
                   className="mt-4 w-full bg-red-50 p-5 rounded-none"
                 >
                   <p className="font-semibold">
-                    계정과 연결된 이력서를 삭제하고 탈퇴할까요?
+                    이 브라우저에 저장된 회원정보와 면접 자료를 삭제할까요?
                   </p>
                   <p className="text-sm mt-2">
-                    삭제한 계정과 이력서는 복구할 수 없습니다. 서버의 면접 세션과 리포트는 유지되며, 이 브라우저에 저장된 계정 관련 데이터는 정리됩니다.
+                    삭제한 정보는 복구할 수 없습니다.
                   </p>
                   <div className="flex gap-4 mt-4">
-                    <button disabled={deleting} onClick={() => setWithdraw(false)}>취소</button>
+                    <button onClick={() => setWithdraw(false)}>취소</button>
                     <button
                       className="text-red-600 font-bold"
-                      disabled={deleting || saving}
-                      onClick={handleDeleteAccount}
+                      onClick={() => {
+                        [
+                          "iv-profile",
+                          "iv-history",
+                          "iv-resumes",
+                          "iv-reports",
+                        ].forEach((key) => localStorage.removeItem(key));
+                        [
+                          "interviewAnalysis",
+                          "interviewResume",
+                          "iv-current-id",
+                          "iv-selected-report",
+                          "visionSessionId",
+                        ].forEach((key) => sessionStorage.removeItem(key));
+                        onNavigate("main");
+                      }}
                     >
-                      {deleting ? "탈퇴 중..." : "회원 탈퇴"}
+                      탈퇴 및 데이터 삭제
                     </button>
                   </div>
                 </div>
@@ -385,9 +347,7 @@ export default function ManagementScreen({
           <div className="flex justify-between items-center mb-5">
             <h2 className="font-bold">내 이력서</h2>
             <Button
-              disabled={resumeSaving}
               onClick={() => {
-                setResumeError("");
                 setDraft(
                   resumes[0]
                     ? { ...resumes[0] }
@@ -406,13 +366,42 @@ export default function ManagementScreen({
           </div>
           {draft ? (
             <Card className="p-7">
-              <form onSubmit={handleSaveResume}>
-                <p className="text-sm text-muted-foreground">{draft.resume_id != null ? "서버에 등록된 이력서를 수정합니다." : "이 이력서는 브라우저에만 저장됩니다. 서버 등록은 아직 연결되지 않았습니다."}</p>
-                {resumeError && <p role="alert" className="mt-3 text-red-600">{resumeError}</p>}
-                <fieldset disabled={resumeSaving}>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const fields = getResumeFields(draft);
+                  const text = resumeToText(fields);
+                  if (!text) {
+                    setNotice(
+                      "한 개 이상의 항목을 작성해 주세요.",
+                    );
+                    return;
+                  }
+                  const next = [
+                    {
+                      id: draft.id,
+                      title: draft.title.trim(),
+                      text,
+                      fields,
+                      date: new Date().toISOString(),
+                    },
+                  ];
+                  try {
+                    localStorage.setItem("iv-resumes", JSON.stringify(next));
+                    setResumes(next);
+                    setDraft(null);
+                    setNotice("이력서가 저장되었습니다.");
+                  } catch {
+                    setNotice(
+                      "저장 공간이 부족합니다. 불필요한 데이터를 정리한 후 다시 시도해 주세요.",
+                    );
+                  }
+                }}
+              >
+              
                 <div className="mt-7">
                   <ResumeFormFields
-                    value={getResumeFields({ ...draft, text: draft.text ?? draft.content })}
+                    value={getResumeFields(draft)}
                     onChange={(fields) => setDraft({ ...draft, fields })}
                   />
                 </div>
@@ -421,13 +410,12 @@ export default function ManagementScreen({
                     className="bg-primary text-white rounded-none px-6 py-3"
                     type="submit"
                   >
-                    {resumeSaving ? "저장 중..." : draft.resume_id != null ? "수정 저장" : "브라우저에 저장"}
+                    저장
                   </button>
                   <button type="button" onClick={() => setDraft(null)}>
                     취소
                   </button>
                 </div>
-                </fieldset>
               </form>
             </Card>
           ) : viewResume ? (
@@ -442,7 +430,7 @@ export default function ManagementScreen({
                     setViewResume(null);
                   }}
                 >
-                  이력서 수정
+                  이력서 등록
                 </Button>
                 <Button
                   onClick={() => {
@@ -473,7 +461,7 @@ export default function ManagementScreen({
                         : setViewResume(r)
                     }
                   >
-                    {screen === "resume-edit" ? "이력서 수정" : "이력서 조회"}{" "}
+                    {screen === "resume-edit" ? "이력서 등록" : "이력서 조회"}{" "}
                     <ChevronRight size={16} />
                   </Button>
                 </Card>
@@ -487,47 +475,165 @@ export default function ManagementScreen({
         </>
       )}
       {screen === "history" && (
-        <Card className="p-6" aria-busy={sessionsLoading}>
-          {sessionsLoading ? <p role="status">면접 내역을 불러오는 중입니다.</p> : sessionsError ? (
-            <div role="alert" className="space-y-3">
-              <p className="text-red-600">{sessionsError}</p>
-              <Button onClick={() => setSessionsAttempt((attempt) => attempt + 1)}>다시 시도</Button>
-            </div>
+        <Card className="p-6">
+          <div className="flex justify-between mb-6">
+            <h2 className="font-bold">전체 {entries.length}건</h2>
+          </div>
+          {entries.length ? (
+            entries.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex flex-wrap gap-4 items-center justify-between border-t border-border py-5"
+              >
+                <div>
+                  <h3 className="font-bold">{entry.title}</h3>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {new Date(entry.date).toLocaleString("ko-KR")} · 질문 1개
+                  </p>
+                </div>
+                <Button onClick={() => navigateReport(entry, "dashboard")}>
+                  분석 결과 조회
+                  <ChevronRight size={16} />
+                </Button>
+              </div>
+            ))
           ) : (
-            <>
-              <h2 className="font-bold mb-6">전체 {sessions.length}건</h2>
-              {sessions.length ? sessions.map((session) => (
-                <div key={session.session_id} className="flex flex-wrap gap-4 items-center justify-between border-t border-border py-5">
-                  <div>
-                    <h3 className="font-bold">면접 #{session.session_id} · 직무 #{session.job_id}</h3>
-                    <p className="text-sm text-muted-foreground mt-2">
-                      {({ technical: "기술 면접", behavioral: "인성 면접" } as Record<string, string>)[session.interview_type] ?? session.interview_type}
-                      {" · "}{({ easy: "쉬움", medium: "보통", hard: "어려움" } as Record<string, string>)[session.difficulty] ?? session.difficulty}
-                      {" · 질문 "}{session.question_count}개
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-2">시작: {new Date(session.started_at).toLocaleString("ko-KR")}</p>
-                    {session.ended_at && <p className="text-sm text-muted-foreground mt-2">종료: {new Date(session.ended_at).toLocaleString("ko-KR")}</p>}
-                  </div>
-                  {/* 종료된 면접은 세션 번호로 서버 리포트를 조회합니다. */}
-                  {session.ended_at && <Button onClick={() => openReport(session.session_id)}>분석 결과 조회</Button>}
-                  <Badge>{session.ended_at ? "완료" : "미종료"}</Badge>
-                </div>
-              )) : (
-                <div className="text-center py-16">
-                  <FileText size={36} className="mx-auto mb-4 text-primary" />
-                  <h2 className="font-bold text-xl">면접 내역이 없습니다</h2>
-                  <Button className="mt-6" onClick={() => onNavigate("job-select")}>면접 시작</Button>
-                </div>
-              )}
-            </>
+            <div className="text-center py-16">
+              <FileText size={36} className="mx-auto mb-4 text-primary" />
+              <h2 className="font-bold text-xl">완료한 면접이 없습니다</h2>
+              
+              <Button className="mt-6" onClick={() => onNavigate("job-select")}>
+                면접 시작
+              </Button>
+            </div>
           )}
         </Card>
       )}
-      {screen === "reports" && <ReportList onSelect={openReport} />}
+      {screen === "reports" && (
+        <section aria-label="리포트 목록">
+          <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+            <h2 className="font-bold">전체 {entries.length}건</h2>
+            <Button onClick={() => onNavigate("tips")}>
+              면접 TIP
+            </Button>
+          </div>
+          <div className="space-y-6">
+            {entries.map((entry) => (
+              <Card key={entry.id} className="p-6 sm:p-8">
+                <Badge>
+                  {entry.id === EXAMPLE_REPORT.id ? "예시 리포트" : "REPORT"}
+                </Badge>
+                <h2 className="text-xl sm:text-2xl font-bold mt-4">
+                  {new Date(entry.date).toLocaleDateString("ko-KR", {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  })}
+                </h2>
+                <p className="text-sm text-muted-foreground mt-3">
+                  {new Date(entry.date).toLocaleTimeString("ko-KR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </p>
+                <div className="grid sm:grid-cols-3 gap-4 my-6">
+                  {[
+                    ["질문 수", entry.id === EXAMPLE_REPORT.id ? "2개" : "1개"],
+                    [
+                      "시선 안정성",
+                      entry.analysis?.gazeStability == null
+                        ? "측정 데이터 없음"
+                        : `${entry.analysis.gazeStability}%`,
+                    ],
+                    [
+                      "상태",
+                      entry.id === EXAMPLE_REPORT.id
+                        ? "예시 데이터"
+                        : "저장 완료",
+                    ],
+                  ].map(([label, value]) => (
+                    <div key={label} className="bg-muted/60 p-5 rounded-none">
+                      <p className="text-sm text-muted-foreground">{label}</p>
+                      <p className="font-bold text-lg mt-2">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={() => navigateReport(entry, "dashboard")}>
+                    전체 분석 결과 조회
+                  </Button>
+                  <Button
+                    onClick={() => navigateReport(entry, "question-analysis")}
+                  >
+                    질문별 상세 분석
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
       {screen === "report-detail" && (
         <>
-          <Button className="mb-5" onClick={() => onNavigate("reports")}>리포트 목록으로 돌아가기</Button>
-          <ServerReport sessionId={selectedReportSessionId()} />
+          <Button className="mb-5" onClick={() => onNavigate("reports")}>
+            리포트 목록으로 돌아가기
+          </Button>
+          {selected ? (
+            <Card className="p-8">
+              
+              <h2 className="text-2xl font-bold mt-4">{selected.title}</h2>
+              <p className="text-muted-foreground mt-3">
+                {new Date(selected.date).toLocaleString("ko-KR")}
+              </p>
+              <div className="grid sm:grid-cols-3 gap-5 my-8">
+                {[
+                  [
+                    "질문 수",
+                    selected.id === EXAMPLE_REPORT.id ? "2개" : "1개",
+                  ],
+                  [
+                    "시선 안정성",
+                    selected.analysis?.gazeStability == null
+                      ? "측정 데이터 없음"
+                      : `${selected.analysis.gazeStability}%`,
+                  ],
+                  ["상태", "저장 완료"],
+                ].map(([label, value]) => (
+                  <div key={label} className="bg-muted/60 p-5 rounded-none">
+                    <p className="text-sm text-muted-foreground">{label}</p>
+                    <p className="font-bold text-lg mt-2">{value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={() => {
+                    sessionStorage.setItem(
+                      "interviewAnalysis",
+                      JSON.stringify(selected.analysis),
+                    );
+                    sessionStorage.setItem("iv-current-id", selected.id);
+                    onNavigate("dashboard");
+                  }}
+                >
+                  전체 분석 결과 조회
+                </Button>
+                <Button onClick={() => onNavigate("question-analysis")}>
+                  질문별 상세 분석
+                </Button>
+                <Button onClick={() => onNavigate("tips")}>면접 TIP</Button>
+              </div>
+            </Card>
+          ) : (
+            <Card className="p-16 text-center">
+              <h2 className="text-xl font-bold">
+                조회할 이전 면접 기록이 없습니다
+              </h2>
+              <p className="text-muted-foreground mt-3">
+                면접을 완료하면 이곳에서 리포트를 확인할 수 있어요.
+              </p>
+            </Card>
+          )}
         </>
       )}
     </main>
