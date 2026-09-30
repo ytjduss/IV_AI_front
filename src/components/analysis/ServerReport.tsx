@@ -13,6 +13,7 @@ export function ReportList({ onSelect }: { onSelect: (sessionId: number) => void
     const controller = new AbortController();
     setLoading(true);
     setError("");
+    // UC-61: 리포트 목록 화면 진입/재시도 시 GET /interview/reports를 호출합니다.
     listMyReports(controller.signal)
       .then((data) => { if (!controller.signal.aborted) setReports(data); })
       .catch((error) => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "리포트 목록 조회에 실패했습니다."); })
@@ -46,6 +47,8 @@ export function ServerReport({ sessionId }: { sessionId: number | null }) {
     setLoading(true);
     setError("");
     // 404 등 미생성 응답을 가짜 점수로 대체하지 않고 재조회할 수 있게 합니다.
+    // UC-52: 선택한 면접의 GET /interview/session/{session_id}/report를 호출합니다.
+    // 반환된 종합·항목별 점수와 strength/improvement를 아래 카드에 표시합니다.
     getReport(sessionId, controller.signal)
       .then((data) => { if (!controller.signal.aborted) setReport(data); })
       .catch((error) => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "리포트 조회에 실패했습니다."); })

@@ -1,3 +1,4 @@
+import { updateResume } from "../api/resume";
 import { INTERVIEW_TIPS } from "../data/interviewTips";
 import type { Screen } from "../type/screen";
 import { useEffect, useState } from "react";
@@ -86,6 +87,8 @@ export default function ManagementScreen({
     readLocal<any[]>("iv-resumes", []).slice(0, 1),
   );
   const [draft, setDraft] = useState<any>(null);
+  const [resumeSaving, setResumeSaving] = useState(false);
+  const [resumeError, setResumeError] = useState("");
   const displayedResumes = resumes.length || screen !== "resumes" ? resumes : [EXAMPLE_RESUME];
   const [viewResume, setViewResume] = useState<any>(null);
   const fieldClass =
@@ -153,6 +156,44 @@ export default function ManagementScreen({
     }
     clearAccountStorage();
     onNavigate("login");
+  };
+
+  const handleSaveResume = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!draft || resumeSaving) return;
+    setResumeError("");
+    setNotice("");
+    const fields = getResumeFields({ ...draft, text: draft.text ?? draft.content });
+    const content = resumeToText(fields);
+    if (!content.trim()) {
+      setResumeError("한 개 이상의 항목을 작성해 주세요.");
+      return;
+    }
+    const hasServerId = draft.resume_id != null;
+    setResumeSaving(true);
+    try {
+      // UC-23: 입력 필드를 전문으로 변환하여 PUT /resume/{resume_id}에 전달합니다.
+      // 서버 등록/조회로 받은 ID만 사용하며 로컬 UUID는 전송하지 않습니다.
+      if (hasServerId) await updateResume(draft.resume_id, content);
+    } catch (error) {
+      // 실패하면 편집 내용과 기존 저장 데이터를 유지하여 재시도할 수 있게 합니다.
+      setResumeError(error instanceof Error ? error.message : "이력서 수정에 실패했습니다.");
+      setResumeSaving(false);
+      return;
+    }
+    const next = [{ ...draft, title: (draft.title ?? "").trim(), text: content,
+      content, fields, date: new Date().toISOString() }];
+    try {
+      // 서버 수정 성공 이후 캐시를 갱신하며 resume_id도 함께 보관합니다.
+      localStorage.setItem("iv-resumes", JSON.stringify(next));
+      setNotice(hasServerId ? "이력서가 서버에 수정 저장되었습니다." : "이력서를 이 브라우저에 저장했습니다. 서버 등록은 아직 연결되지 않았습니다.");
+    } catch {
+      setNotice(hasServerId ? "서버 수정은 완료했지만 브라우저 저장 공간이 부족해 로컬 사본을 갱신하지 못했습니다." : "브라우저 저장 공간이 부족하여 저장하지 못했습니다.");
+      if (!hasServerId) { setResumeSaving(false); return; }
+    }
+    setResumes(next);
+    setDraft(null);
+    setResumeSaving(false);
   };
 
   return (
@@ -344,7 +385,9 @@ export default function ManagementScreen({
           <div className="flex justify-between items-center mb-5">
             <h2 className="font-bold">내 이력서</h2>
             <Button
+              disabled={resumeSaving}
               onClick={() => {
+                setResumeError("");
                 setDraft(
                   resumes[0]
                     ? { ...resumes[0] }
@@ -363,42 +406,13 @@ export default function ManagementScreen({
           </div>
           {draft ? (
             <Card className="p-7">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const fields = getResumeFields(draft);
-                  const text = resumeToText(fields);
-                  if (!text) {
-                    setNotice(
-                      "한 개 이상의 항목을 작성해 주세요.",
-                    );
-                    return;
-                  }
-                  const next = [
-                    {
-                      id: draft.id,
-                      title: draft.title.trim(),
-                      text,
-                      fields,
-                      date: new Date().toISOString(),
-                    },
-                  ];
-                  try {
-                    localStorage.setItem("iv-resumes", JSON.stringify(next));
-                    setResumes(next);
-                    setDraft(null);
-                    setNotice("이력서가 저장되었습니다.");
-                  } catch {
-                    setNotice(
-                      "저장 공간이 부족합니다. 불필요한 데이터를 정리한 후 다시 시도해 주세요.",
-                    );
-                  }
-                }}
-              >
-              
+              <form onSubmit={handleSaveResume}>
+                <p className="text-sm text-muted-foreground">{draft.resume_id != null ? "서버에 등록된 이력서를 수정합니다." : "이 이력서는 브라우저에만 저장됩니다. 서버 등록은 아직 연결되지 않았습니다."}</p>
+                {resumeError && <p role="alert" className="mt-3 text-red-600">{resumeError}</p>}
+                <fieldset disabled={resumeSaving}>
                 <div className="mt-7">
                   <ResumeFormFields
-                    value={getResumeFields(draft)}
+                    value={getResumeFields({ ...draft, text: draft.text ?? draft.content })}
                     onChange={(fields) => setDraft({ ...draft, fields })}
                   />
                 </div>
@@ -407,12 +421,13 @@ export default function ManagementScreen({
                     className="bg-primary text-white rounded-none px-6 py-3"
                     type="submit"
                   >
-                    저장
+                    {resumeSaving ? "저장 중..." : draft.resume_id != null ? "수정 저장" : "브라우저에 저장"}
                   </button>
                   <button type="button" onClick={() => setDraft(null)}>
                     취소
                   </button>
                 </div>
+                </fieldset>
               </form>
             </Card>
           ) : viewResume ? (
@@ -427,7 +442,7 @@ export default function ManagementScreen({
                     setViewResume(null);
                   }}
                 >
-                  이력서 등록
+                  이력서 수정
                 </Button>
                 <Button
                   onClick={() => {
@@ -458,7 +473,7 @@ export default function ManagementScreen({
                         : setViewResume(r)
                     }
                   >
-                    {screen === "resume-edit" ? "이력서 등록" : "이력서 조회"}{" "}
+                    {screen === "resume-edit" ? "이력서 수정" : "이력서 조회"}{" "}
                     <ChevronRight size={16} />
                   </Button>
                 </Card>

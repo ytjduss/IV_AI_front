@@ -1,5 +1,5 @@
+import { requireInterviewSessionId } from "../lib/interviewSession";
 import { healthCheck } from "../api/health";
-import { CAPTURE_MODE } from "../lib/captureMode";
 import type { Screen } from "../type/screen";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -32,11 +32,10 @@ function DeviceTestScreen({
   onStartWithoutCamera: () => void;
 }) {
   const startWithoutCamera = async () => {
-    if (CAPTURE_MODE) { onStartWithoutCamera(); return; }
     if (testing) return;
     setTesting(true);
     try {
-      const sessionId = `interview-${crypto.randomUUID()}`;
+      const sessionId = requireInterviewSessionId();
       await startAudioSession(sessionId);
       sessionStorage.setItem("interviewSessionId", sessionId);
       sessionStorage.removeItem("visionSessionId");
@@ -81,7 +80,7 @@ function DeviceTestScreen({
     "waiting" | "good" | "adjust"
   >("waiting");
   const videoRef = useRef<HTMLVideoElement>(null);
-  const sessionIdRef = useRef(`interview-${crypto.randomUUID()}`);
+  const sessionIdRef = useRef(sessionStorage.getItem("interviewSessionId") ?? "");
 
   useEffect(() => {
     return () => calibrationController.current?.abort();
@@ -108,6 +107,8 @@ function DeviceTestScreen({
       // 응답 없는 서버 때문에 확인 중 상태가 무한히 유지되지 않게 제한합니다.
       timer = setTimeout(() => current.abort(), 8000);
       try {
+        // Health Check: 장비 테스트 진입/온라인 복귀/재검사 시 GET /를 호출합니다.
+        // HTTP 성공과 { status: "ok" }를 모두 확인한 뒤 정상 연결로 표시합니다.
         await healthCheck(current.signal);
         if (!disposed && controller === current) setHealthStatus("ok");
       } catch (error) {
@@ -233,10 +234,13 @@ function DeviceTestScreen({
 
   const runTest = async () => {
     if (testing || calibrationController.current || !cameraOK) return;
+    let sessionId: string;
+    try { sessionId = requireInterviewSessionId(); }
+    catch (error) { setVisionStatus((error as Error).message); return; }
     const controller = new AbortController();
     calibrationController.current = controller;
 
-    const sessionId = `interview-${crypto.randomUUID()}`;
+    // 재측정 시에도 생성된 서버 세션 ID를 그대로 사용합니다.
     sessionIdRef.current = sessionId;
     sessionStorage.removeItem("visionSessionId");
     setTesting(true);
@@ -352,12 +356,11 @@ function DeviceTestScreen({
   };
 
   const startInterview = async () => {
-    if (CAPTURE_MODE) { onNavigate("interview"); return; }
     if (testing || !calibrationReady || !calibrationFinalized) return;
     setTesting(true);
     setVisionStatus("면접 화면 준비 중");
     try {
-      await startAudioSession(sessionIdRef.current);
+      await startAudioSession(requireInterviewSessionId());
       sessionStorage.setItem("interviewSessionId", sessionIdRef.current);
       onNavigate("interview");
     } catch (error) {
@@ -550,7 +553,7 @@ function DeviceTestScreen({
 
             <Button
               onClick={startInterview}
-              disabled={!CAPTURE_MODE && (!calibrationReady || testing)}
+              disabled={!calibrationReady || testing}
             >
               면접 시작 <ChevronRight className="w-5 h-5" />
             </Button>
