@@ -12,12 +12,14 @@ export type ResumeFields = {
 
 export function resumeToText(fields: ResumeFields): string {
   return RESUME_FIELDS
-    .filter((field) => fields[field.key]?.trim())
-    .map(
-      (field) =>
-        `${field.label}\n${fields[field.key]!.trim()}`
-    )
-    .join("\n\n");
+    .map((field) => {
+      const content = fields[field.key]?.replace(/\s+/g, " ").trim();
+      if (!content) return "";
+      const ending = /[.!?。！？]$/.test(content) ? "" : ".";
+      return `${field.label}: ${content}${ending}`;
+    })
+    .filter(Boolean)
+    .join(" ");
 } 
 export function getResumeFields(
   resume: {

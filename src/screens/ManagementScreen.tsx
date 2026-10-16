@@ -245,7 +245,7 @@ export default function ManagementScreen({
                     type="submit"
                     className="bg-primary text-white rounded-none px-6 py-3 font-semibold"
                   >
-                    {resumeSaving ? "저장 중..." : "저장"}
+                    저장
                   </button>
                   <button
                     type="button"
@@ -402,7 +402,11 @@ export default function ManagementScreen({
                   setResumeSaving(true);
                   try {
                     let serverId = draft.serverId;
-                    if (draft.serverSaved && !serverId) throw new Error("서버 이력서 번호가 없어 수정할 수 없습니다. 등록 응답의 resume_id 확인이 필요합니다.");
+                    if (draft.serverSaved && !serverId) {
+                      const existing = await getResume();
+                      if (!existing) throw new Error("등록된 이력서를 조회하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                      serverId = existing.resume_id;
+                    }
                     if (serverId) await updateResume(serverId, text);
                     else {
                       const result = await createResume(text);
@@ -436,7 +440,7 @@ export default function ManagementScreen({
                     className="bg-primary text-white rounded-none px-6 py-3"
                     type="submit"
                   >
-                    저장
+                    {resumeSaving ? "저장 중..." : "저장"}
                   </button>
                   <button type="button" onClick={() => setDraft(null)}>
                     취소
