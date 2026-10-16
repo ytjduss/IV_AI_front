@@ -1,17 +1,10 @@
+import { getResume, resumeForScreen } from "../api/resume";
 import { createInterviewSession, resolveJobId } from "../api/interview";
 import type { Screen } from "../type/screen";
 import { CheckCircle2, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-
-function readLocal<T>(key: string, fallback: T): T {
-  try {
-    return JSON.parse(localStorage.getItem(key) ?? "null") ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const jobs = ["디자인", "정보통신", "연구개발", "공공서비스", "영업마케팅", "경영사무", "생산 관리"];
@@ -20,18 +13,27 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [createdSession, setCreatedSession] = useState<number | null>(null);
-  const [savedResumes] = useState(() =>
-    readLocal<{ id: string; title: string; text: string }[]>(
-      "iv-resumes",
-      [],
-    ).slice(0, 1),
-  );
-  const [selectedResumeId, setSelectedResumeId] = useState(
-    savedResumes[0]?.id ?? "",
-  );
+  const [savedResumes, setSavedResumes] = useState<ReturnType<typeof resumeForScreen>[]>([]);
+  const [selectedResumeId, setSelectedResumeId] = useState("");
+  const [resumeLoading, setResumeLoading] = useState(true);
+  const [resumeError, setResumeError] = useState("");
+  const [resumeAttempt, setResumeAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setResumeLoading(true);
+    setResumeError("");
+    getResume(controller.signal).then((resume) => {
+      if (controller.signal.aborted) return;
+      setSavedResumes(resume ? [resumeForScreen(resume)] : []);
+      setSelectedResumeId(resume ? String(resume.resume_id) : "");
+    }).catch((error) => {
+      if (!controller.signal.aborted) setResumeError(error instanceof Error ? error.message : "이력서 조회에 실패했습니다.");
+    }).finally(() => { if (!controller.signal.aborted) setResumeLoading(false); });
+    return () => controller.abort();
+  }, [resumeAttempt]);
 
   const handleCreateSession = async () => {
-    if (creating) return;
+    if (creating || resumeLoading || resumeError) return;
     setCreating(true);
     setError("");
     try {
@@ -83,6 +85,8 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           ))}
         </fieldset>
         {error && <p role="alert" className="text-red-600 mb-4">{error}</p>}
+        {resumeLoading && <p role="status">이력서를 불러오는 중입니다.</p>}
+        {resumeError && <div role="alert"><p>{resumeError}</p><Button onClick={() => setResumeAttempt((value) => value + 1)}>다시 조회</Button></div>}
         {savedResumes.length > 0 && (
           <Card className="p-6 mb-8">
             <label
@@ -109,7 +113,7 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <Button onClick={() => onNavigate("main")}>이전</Button>
           <Button
             onClick={handleCreateSession}
-            disabled={creating || !selected}
+            disabled={creating || !selected || resumeLoading || Boolean(resumeError)}
           >
             {creating ? "면접 생성 중..." : "다음: 장비 테스트"} <ChevronRight className="w-5 h-5" />
           </Button>

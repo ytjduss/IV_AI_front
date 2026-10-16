@@ -1,6 +1,7 @@
+import { createResume } from "../api/resume";
 import type { Screen } from "../type/screen";
 import { ChevronRight, Video } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -27,6 +28,9 @@ function LoginScreen({
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
   //회원가입 
   const handleSignup = async (skipResume = false) => {
     setNotice("");
@@ -43,6 +47,9 @@ function LoginScreen({
       return;
     }
 
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       //회원가입 API
       await signup(email.trim(), password);
@@ -50,11 +57,12 @@ function LoginScreen({
       const text = skipResume ? "" : resumeToText(resumeFields);
 
       if (text) {
-        //db 연결 필요
+        // 가입 직후에는 인증 토큰이 없으므로 같은 이메일로 로그인한 후 등록합니다.
         localStorage.setItem(
-          "iv-resumes",
-        JSON.stringify([
+          "iv-pending-resume",
+        JSON.stringify(
           {
+            email: email.trim(),
             id: crypto.randomUUID(),
             title: resumeFields.name?.trim()
               ? `${resumeFields.name.trim()}의 이력서`
@@ -65,8 +73,10 @@ function LoginScreen({
             fields: resumeFields,
             date: new Date().toISOString(),
           },
-        ]),
+        ),
       );
+    } else {
+      localStorage.removeItem("iv-pending-resume");
     }
 
     // 로그인 화면에서 회원가입 탭을 연 경우에도 로그인 폼으로 전환합니다.
@@ -79,6 +89,9 @@ function LoginScreen({
       setNotice(
         error instanceof Error ? error.message : "회원가입 실패.",
       );
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
@@ -92,6 +105,9 @@ function LoginScreen({
       setNotice("아이디 또는 비밀번호를 입력해주세요.");
       return;
     }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     try 
     {
       const result = await login(
@@ -99,11 +115,27 @@ function LoginScreen({
         password,
       );
 
+      if (typeof result?.access_token !== "string" || !result.access_token.trim()) throw new Error("로그인 응답에 인증 토큰이 없습니다.");
       localStorage.setItem(
       "access_token",
       result.access_token,
     );
 
+    const pendingText = localStorage.getItem("iv-pending-resume");
+    const pending = pendingText ? JSON.parse(pendingText) : null;
+    if (pending?.email === email.trim()) {
+      try {
+        const saved = await createResume(pending.text);
+        // 성공한 등록을 다시 전송하지 않도록 대기 항목부터 제거합니다.
+        localStorage.removeItem("iv-pending-resume");
+        const serverId = Number.isSafeInteger(saved?.resume_id) && saved!.resume_id! > 0 ? saved!.resume_id : undefined;
+        const { email: pendingEmail, ...resume } = pending;
+        localStorage.setItem("iv-resumes", JSON.stringify([{ ...resume, id: serverId ? String(serverId) : resume.id, serverId, serverSaved: true }]));
+      } catch (error) {
+        setNotice(`로그인은 성공했지만 이력서 등록을 완료하지 못했습니다. ${error instanceof Error ? error.message : "다시 시도해 주세요."}`);
+        return;
+      }
+    }
     onNavigate("job-select");
   } catch (error) {
     setNotice(
@@ -111,6 +143,9 @@ function LoginScreen({
         ? error.message
         : "로그인에 실패했습니다.",
     );
+  } finally {
+    submittingRef.current = false;
+    setSubmitting(false);
   }
 };
 
@@ -123,6 +158,7 @@ function LoginScreen({
           <h1 className="text-2xl font-bold text-foreground">IV-Coach</h1>
         </div>
         <Card className="p-8">
+          <fieldset disabled={submitting}>
           <div hidden={enteringResume}>
             <div className="flex rounded-xl bg-muted p-1 mb-6">
               {(["login", "signup"] as const).map((t) => (
@@ -164,7 +200,7 @@ function LoginScreen({
             {tab === "signup" ? (
               <div className="mt-6 space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  이력서를 입력하면 맞춤형 면접 질문을 생성이 가능합니다.
+                  이력서는 회원가입 후 로그인하면 서버에 등록됩니다.
                 </p>
                 <Button
                   onClick={() => {
@@ -222,6 +258,8 @@ function LoginScreen({
               </div>
             </section>
           )}
+          </fieldset>
+          {submitting && <p role="status" className="mt-4 text-sm">처리 중입니다.</p>}
           {notice && (
             <p role="alert" className="mt-4 text-sm text-red-600">
               {notice}

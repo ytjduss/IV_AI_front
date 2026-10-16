@@ -1,6 +1,7 @@
+import { createResume, updateResume, getResume, resumeForScreen } from "../api/resume";
 import { INTERVIEW_TIPS } from "../data/interviewTips";
 import type { Screen } from "../type/screen";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronRight, FileText, BookOpen, Trophy } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -11,7 +12,6 @@ import { resumeToText, getResumeFields } from "../type/resume";
 import { readLocal } from "../lib/storage";
 import { getReports } from "../lib/reports";
 import { EXAMPLE_REPORT } from "../data/exampleReport";
-import { EXAMPLE_RESUME } from "../data/exampleResume";
 import { getMyInfo, logout, type MyInfo } from "../api/auth";
 
 // 회원정보 조회 API 임시 해제. 재연결 시 true로 
@@ -70,12 +70,27 @@ export default function ManagementScreen({
   }, [screen, infoAttempt]);
   const [notice, setNotice] = useState("");
   const [withdraw, setWithdraw] = useState(false);
-  const [resumes, setResumes] = useState<any[]>(() =>
-    readLocal<any[]>("iv-resumes", []).slice(0, 1),
-  );
+  const [resumes, setResumes] = useState<any[]>([]);
+  const [resumeSaving, setResumeSaving] = useState(false);
+  const resumeSavingRef = useRef(false);
   const [draft, setDraft] = useState<any>(null);
-  const displayedResumes = resumes.length || screen !== "resumes" ? resumes : [EXAMPLE_RESUME];
+  const displayedResumes = resumes;
   const [viewResume, setViewResume] = useState<any>(null);
+  const [resumesLoading, setResumesLoading] = useState(true);
+  const [resumesError, setResumesError] = useState("");
+  const [resumeAttempt, setResumeAttempt] = useState(0);
+  useEffect(() => {
+    if (screen !== "resumes" && screen !== "resume-edit") return;
+    const controller = new AbortController();
+    setResumesLoading(true);
+    setResumesError("");
+    getResume(controller.signal).then((resume) => {
+      if (!controller.signal.aborted) setResumes(resume ? [resumeForScreen(resume)] : []);
+    }).catch((error) => {
+      if (!controller.signal.aborted) setResumesError(error instanceof Error ? error.message : "이력서 조회에 실패했습니다.");
+    }).finally(() => { if (!controller.signal.aborted) setResumesLoading(false); });
+    return () => controller.abort();
+  }, [screen, resumeAttempt]);
   const reports = getReports();
   const entries =
     screen === "reports" || screen === "report-detail"
@@ -141,6 +156,7 @@ export default function ManagementScreen({
       </p>
       {notice && (
         <p role="status" className="bg-accent rounded-none p-4 mb-5 text-primary">
+          {notice}
         </p>
       )}
       {(screen === "profile" || screen === "profile-edit") && (
@@ -229,7 +245,7 @@ export default function ManagementScreen({
                     type="submit"
                     className="bg-primary text-white rounded-none px-6 py-3 font-semibold"
                   >
-                    저장
+                    {resumeSaving ? "저장 중..." : "저장"}
                   </button>
                   <button
                     type="button"
@@ -347,6 +363,7 @@ export default function ManagementScreen({
           <div className="flex justify-between items-center mb-5">
             <h2 className="font-bold">내 이력서</h2>
             <Button
+              disabled={resumesLoading || Boolean(resumesError) || resumeSaving}
               onClick={() => {
                 setDraft(
                   resumes[0]
@@ -361,49 +378,58 @@ export default function ManagementScreen({
                 setViewResume(null);
               }}
             >
-              이력서 등록
+              {resumes.length ? "이력서 수정" : "이력서 등록"}
             </Button>
           </div>
-          {draft ? (
+          {resumesLoading ? <p role="status">이력서를 불러오는 중입니다.</p> : resumesError ? (
+            <div role="alert"><p>{resumesError}</p><Button onClick={() => setResumeAttempt((value) => value + 1)}>다시 조회</Button></div>
+          ) : draft ? (
             <Card className="p-7">
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
+                  if (resumeSavingRef.current) return;
+                  setNotice("");
                   const fields = getResumeFields(draft);
-                  const text = resumeToText(fields);
-                  if (!text) {
+                  const text = draft.serverSaved ? draft.text : resumeToText(fields);
+                  if (!text.trim()) {
                     setNotice(
                       "한 개 이상의 항목을 작성해 주세요.",
                     );
                     return;
                   }
-                  const next = [
-                    {
-                      id: draft.id,
-                      title: draft.title.trim(),
-                      text,
-                      fields,
-                      date: new Date().toISOString(),
-                    },
-                  ];
+                  resumeSavingRef.current = true;
+                  setResumeSaving(true);
                   try {
-                    localStorage.setItem("iv-resumes", JSON.stringify(next));
-                    setResumes(next);
+                    let serverId = draft.serverId;
+                    if (draft.serverSaved && !serverId) throw new Error("서버 이력서 번호가 없어 수정할 수 없습니다. 등록 응답의 resume_id 확인이 필요합니다.");
+                    if (serverId) await updateResume(serverId, text);
+                    else {
+                      const result = await createResume(text);
+                      serverId = Number.isSafeInteger(result?.resume_id) && result!.resume_id! > 0 ? result!.resume_id : undefined;
+                    }
+                    setDraft({ ...draft, text, serverId, serverSaved: true });
+                    const latest = await getResume();
+                    if (!latest) throw new Error("저장은 완료됐지만 이력서를 조회하지 못했습니다. 다시 조회해 주세요.");
+                    setResumes([resumeForScreen(latest)]);
                     setDraft(null);
                     setNotice("이력서가 저장되었습니다.");
-                  } catch {
-                    setNotice(
-                      "저장 공간이 부족합니다. 불필요한 데이터를 정리한 후 다시 시도해 주세요.",
-                    );
+                  } catch (error) {
+                    setNotice(error instanceof Error ? error.message : "이력서 저장에 실패했습니다.");
+                  } finally {
+                    resumeSavingRef.current = false;
+                    setResumeSaving(false);
                   }
                 }}
               >
-              
+              <fieldset disabled={resumeSaving}>
                 <div className="mt-7">
-                  <ResumeFormFields
-                    value={getResumeFields(draft)}
-                    onChange={(fields) => setDraft({ ...draft, fields })}
-                  />
+                  {draft.serverSaved ? (
+                    <label className="block">이력서 내용
+                      <textarea className="mt-3 w-full min-h-80 border p-4" value={draft.text}
+                        onChange={(event) => setDraft({ ...draft, text: event.target.value })} />
+                    </label>
+                  ) : <ResumeFormFields value={getResumeFields(draft)} onChange={(fields) => setDraft({ ...draft, fields })} />}
                 </div>
                 <div className="flex gap-4 mt-6">
                   <button
@@ -416,6 +442,7 @@ export default function ManagementScreen({
                     취소
                   </button>
                 </div>
+              </fieldset>
               </form>
             </Card>
           ) : viewResume ? (
@@ -430,7 +457,7 @@ export default function ManagementScreen({
                     setViewResume(null);
                   }}
                 >
-                  이력서 등록
+                  이력서 수정
                 </Button>
                 <Button
                   onClick={() => {
@@ -461,7 +488,7 @@ export default function ManagementScreen({
                         : setViewResume(r)
                     }
                   >
-                    {screen === "resume-edit" ? "이력서 등록" : "이력서 조회"}{" "}
+                    {screen === "resume-edit" ? "이력서 수정" : "이력서 조회"}{" "}
                     <ChevronRight size={16} />
                   </Button>
                 </Card>
