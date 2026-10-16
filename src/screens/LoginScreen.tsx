@@ -28,11 +28,24 @@ function LoginScreen({
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   
+  const authFormRef = useRef<HTMLFormElement>(null);
+  const readCredentials = () => {
+    const form = authFormRef.current;
+    if (!form) return { email, password, passwordConfirm };
+    const data = new FormData(form);
+    return {
+      email: String(data.get("email") ?? "").trim(),
+      password: String(data.get("password") ?? ""),
+      passwordConfirm: String(data.get("passwordConfirm") ?? ""),
+    };
+  };
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
 
   //회원가입 
   const handleSignup = async (skipResume = false) => {
+    if (submittingRef.current) return;
+    const { email, password, passwordConfirm } = readCredentials();
     setNotice("");
 
      if (!email.trim() || !password.trim())
@@ -98,6 +111,8 @@ function LoginScreen({
   //로그인
   const handleLogin = async () => 
   {
+    if (submittingRef.current) return;
+    const { email, password } = readCredentials();
     setNotice("");
 
     if (!email.trim() || !password.trim())
@@ -158,12 +173,19 @@ function LoginScreen({
           <h1 className="text-2xl font-bold text-foreground">IV-Coach</h1>
         </div>
         <Card className="p-8">
+          <form ref={authFormRef} onSubmit={(event) => {
+            event.preventDefault();
+            if (tab === "login") void handleLogin();
+            else if (enteringResume) void handleSignup();
+            else void handleSignup(true);
+          }}>
           <fieldset disabled={submitting}>
           <div hidden={enteringResume}>
             <div className="flex rounded-xl bg-muted p-1 mb-6">
               {(["login", "signup"] as const).map((t) => (
                 <button
                   key={t}
+                  type="button"
                   onClick={() => setTab(t)}
                   className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${tab === t ? "bg-card shadow-sm text-foreground" : "text-muted-foreground"}`}
                 >
@@ -203,6 +225,7 @@ function LoginScreen({
                   이력서는 회원가입 후 로그인하면 서버에 등록됩니다.
                 </p>
                 <Button
+                  type="button"
                   onClick={() => {
                     setNotice("");
                     setEnteringResume(true);
@@ -211,13 +234,13 @@ function LoginScreen({
                 >
                   이력서 입력하기 <ChevronRight size={18} />
                 </Button>
-                <Button onClick={() => handleSignup(true)} className="w-full">
+                <Button type="button" onClick={() => handleSignup(true)} className="w-full">
                   이력서 없이 진행
                 </Button>
               </div>
             ) : (
               <Button
-                onClick={handleLogin}
+                type="submit"
                 className="w-full"
               >
                 로그인
@@ -238,6 +261,7 @@ function LoginScreen({
               />
               <div className="flex flex-col sm:flex-row gap-3 mt-8">
                 <Button
+                  type="button"
                   onClick={() => {
                     setNotice("");
                     setEnteringResume(false);
@@ -245,10 +269,11 @@ function LoginScreen({
                 >
                   이전
                 </Button>
-                <Button onClick={() => handleSignup(true)}>
+                <Button type="button" onClick={() => handleSignup(true)}>
                   이력서 없이 진행
                 </Button>
                 <Button
+                  type="button"
                   onClick={() => handleSignup()}
                   disabled={!resumeToText(resumeFields).trim()}
                   className="sm:ml-auto"
@@ -259,6 +284,7 @@ function LoginScreen({
             </section>
           )}
           </fieldset>
+          </form>
           {submitting && <p role="status" className="mt-4 text-sm">처리 중입니다.</p>}
           {notice && (
             <p role="alert" className="mt-4 text-sm text-red-600">
