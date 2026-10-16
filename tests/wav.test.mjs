@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { build } from 'esbuild';
+const result = await build({ entryPoints: ['src/lib/wav.ts'], bundle: true, write: false, format: 'esm' });
+const { encodeMonoWav } = await import('data:text/javascript;base64,' + Buffer.from(result.outputFiles[0].text).toString('base64'));
+test('실제 PCM WAV 헤더, 모노 16kHz, 샘플 크기와 클리핑', async () => {
+  const blob = encodeMonoWav(new Float32Array([-2, 0, 2]), 16000);
+  assert.equal(blob.type, 'audio/wav');
+  const buffer = await blob.arrayBuffer();
+  const view = new DataView(buffer);
+  const text = new TextDecoder();
+  assert.equal(text.decode(buffer.slice(0, 4)), 'RIFF');
+  assert.equal(text.decode(buffer.slice(8, 12)), 'WAVE');
+  assert.equal(view.getUint32(4, true), buffer.byteLength - 8);
+  assert.equal(view.getUint16(22, true), 1);
+  assert.equal(view.getUint32(24, true), 16000);
+  assert.equal(view.getUint16(34, true), 16);
+  assert.equal(view.getUint32(40, true), 6);
+  assert.equal(view.getInt16(44, true), -32768);
+  assert.equal(view.getInt16(46, true), 0);
+  assert.equal(view.getInt16(48, true), 32767);
+});

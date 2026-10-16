@@ -51,3 +51,21 @@ test('Health Check는 비인증 GET / 및 status ok를 확인', async () => {
     await assert.rejects(api.healthCheck(AbortSignal.abort()), { name: 'AbortError' });
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('질문별 결과는 세션 ID와 Bearer 인증으로 조회하며 응답 순서를 보존', async () => {
+  const originalFetch = globalThis.fetch;
+  const rows = [{ answer_id: 12, question_id: 5, question: '질문', question_type: 'technical', answer_text: '답변', audio_path: '/uploads/answer.wav', video_path: null, created_at: '2026-09-17T10:05:00' }];
+  try {
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, 'http://localhost:8000/interview/session/1/results');
+      assert.equal(new Headers(options.headers).get('Authorization'), 'Bearer test-token');
+      return Response.json(rows);
+    };
+    assert.deepEqual(await api.getAnswerResults(1), rows);
+    globalThis.fetch = async () => Response.json([]);
+    assert.deepEqual(await api.getAnswerResults(1), []);
+    globalThis.fetch = async () => Response.json({ detail: 'Unauthorized' }, { status: 401 });
+    await assert.rejects(api.getAnswerResults(1), /Unauthorized/);
+    await assert.rejects(api.getAnswerResults(0), /면접을 선택/);
+  } finally { globalThis.fetch = originalFetch; }
+});

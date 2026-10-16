@@ -547,6 +547,7 @@ export default function ManagementScreen({
             리포트 목록으로 돌아가기
           </Button>
           <ServerReport sessionId={selectedReportSessionId()} />
+          {selectedReportSessionId() !== null && <Button className="mt-5" onClick={() => onNavigate("question-analysis")}>질문별 분석 결과</Button>}
         </>
       )}
     </main>

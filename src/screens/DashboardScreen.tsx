@@ -28,6 +28,7 @@ export default function DashboardScreen({
     <main className="max-w-6xl mx-auto px-4 py-10 space-y-6">
       <h1 className="text-3xl font-bold">면접 분석 결과</h1>
       <ServerReport sessionId={reportSessionId} />
+      <Button onClick={() => onNavigate("question-analysis")}>질문별 분석 결과</Button>
       <Button onClick={() => onNavigate("reports")}>리포트 목록 조회</Button>
       <Button onClick={() => onNavigate("tips")}>면접 TIP</Button>
     </main>

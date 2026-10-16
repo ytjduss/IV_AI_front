@@ -1,3 +1,5 @@
+import { AnswerResults } from "../components/analysis/AnswerResults";
+import { selectedReportSessionId } from "../components/analysis/ServerReport";
 import { Button } from "../components/ui/button";
 import VisionSummaryCard from "../components/analysis/VisionSummaryCard";
 import type { InterviewAnalysis } from "../type/vision";
@@ -14,6 +16,14 @@ export default function QuestionAnalysisScreen({
   onNavigate: (s: Screen) => void;
 }) {
   const [activeQ, setActiveQ] = useState(0);
+  const sessionId = selectedReportSessionId();
+  if (sessionId !== null) return (
+    <main className="max-w-5xl mx-auto px-4 py-10 space-y-6">
+      <Button onClick={() => onNavigate("dashboard")}>전체 분석 결과로 돌아가기</Button>
+      <h1 className="text-2xl font-bold">질문별 분석 결과</h1>
+      <AnswerResults sessionId={sessionId} />
+    </main>
+  );
   let analysis: InterviewAnalysis | null = null;
   try {
     analysis = JSON.parse(

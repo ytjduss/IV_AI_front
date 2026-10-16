@@ -21,3 +21,23 @@ export const getReport = (sessionId: number, signal?: AbortSignal) =>
 // 서버가 최신순으로 정렬한 목록을 그대로 사용합니다.
 export const listMyReports = (signal?: AbortSignal) =>
   authenticatedRequest<MyReport[]>("/interview/reports", { signal }, undefined, AUTH_API_BASE_URL);
+
+export type AnswerResult = {
+  answer_id: number;
+  question_id: number;
+  question: string;
+  question_type: string;
+  answer_text: string;
+  video_path: string | null;
+  audio_path: string | null;
+  created_at: string;
+};
+
+export function getAnswerResults(sessionId: number, signal?: AbortSignal) {
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+    return Promise.reject(new Error("조회할 면접을 선택해 주세요."));
+  }
+  return authenticatedRequest<AnswerResult[]>(
+    `/interview/session/${sessionId}/results`, { signal }, undefined, AUTH_API_BASE_URL,
+  );
+}

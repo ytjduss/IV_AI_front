@@ -1,4 +1,5 @@
-import { submitAnswer, generateFollowupQuestion, endInterviewSession, getNextQuestion, type NextQuestion } from "../api/interview";
+import { recordingToWav } from "../lib/wav";
+import { endInterviewSession, getNextQuestion, type NextQuestion } from "../api/interview";
 import { requireInterviewSessionId, clearCompletedSession, requireInitialQuestion } from "../lib/interviewSession";
 import { Camera, CameraOff, Check, ChevronRight, Clock } from "lucide-react";
 import { Badge } from "../components/ui/badge";
@@ -42,10 +43,10 @@ function InterviewScreen({
     "prep" | "answering" | "followup-loading" | "followup"
   >("prep");
   const [qIdx, setQIdx] = useState(0);
-  const [answerText, setAnswerText] = useState("");
-  const [submittedAnswerId, setSubmittedAnswerId] = useState<number | null>(null);
-  // 꼬리질문 생성만 실패하면 이미 저장된 답변을 다시 제출하지 않습니다.
-  const submittedAnswerRef = useRef<number | null>(null);
+  const pendingRecording = useRef<Blob | null>(null);
+  const audioUploaded = useRef(false);
+  const [audioReady, setAudioReady] = useState(false);
+  const audioReadyRef = useRef(false);
   const [camOff, setCamOff] = useState(initialCameraOff);
   const [guide, setGuide] = useState(true);
   const [timer, setTimer] = useState(30);
@@ -207,29 +208,26 @@ function InterviewScreen({
 
   const finishAudio = async () => {
     const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive")
-      throw new Error("녹음 데이터를 찾을 수 없습니다.");
-    try {
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        recorder.onstop = () =>
-          resolve(
-            new Blob(audioChunksRef.current, {
-              type: recorder.mimeType || "audio/webm",
-            }),
-          );
-        recorder.onerror = () => reject(new Error("녹음 종료에 실패했습니다."));
-        recorder.stop();
-      });
-      await analyzeAudio(
-        sessionIdRef.current,
-        new File([blob], `answer-${qIdx}.webm`, { type: blob.type }),
-      );
-      return await getAnswerSummary(sessionIdRef.current);
-    } finally {
-      recorder.stream.getTracks().forEach((track) => track.stop());
-      mediaRecorderRef.current = null;
-      audioChunksRef.current = [];
+    if (!pendingRecording.current && recorder && recorder.state !== "inactive") {
+      try {
+        pendingRecording.current = await new Promise<Blob>((resolve, reject) => {
+          recorder.onstop = () => resolve(new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" }));
+          recorder.onerror = () => reject(new Error("녹음 종료에 실패했습니다."));
+          recorder.stop();
+        });
+      } finally {
+        recorder.stream.getTracks().forEach((track) => track.stop());
+        mediaRecorderRef.current = null;
+        audioChunksRef.current = [];
+      }
     }
+    if (!pendingRecording.current) throw new Error("녹음 데이터를 찾을 수 없습니다.");
+    if (!audioUploaded.current) {
+      const wav = await recordingToWav(pendingRecording.current);
+      await analyzeAudio(sessionIdRef.current, new File([wav], `answer-${qIdx + 1}.wav`, { type: "audio/wav" }));
+      audioUploaded.current = true;
+    }
+    return await getAnswerSummary(sessionIdRef.current);
   };
 
   const finishAnswer = async () => {
@@ -296,7 +294,13 @@ function InterviewScreen({
     setPhase("followup");
     busyRef.current = false;
     setBusy(false);
-    await handleSubmitAnswer(true);
+    if (audioResult.status === "fulfilled") {
+      audioReadyRef.current = true;
+      setAudioReady(true);
+      await handleNext();
+    } else {
+      setQuestionError(analysis.audioError || "음성 전송에 실패했습니다.");
+    }
   };
 
   useEffect(() => {
@@ -372,6 +376,10 @@ function InterviewScreen({
       new MediaRecorder(stream);
 
       audioChunksRef.current = [];
+      pendingRecording.current = null;
+      audioUploaded.current = false;
+      audioReadyRef.current = false;
+      setAudioReady(false);
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -387,8 +395,8 @@ function InterviewScreen({
       //화면 상태
       setRecording(true);
       setPhase("answering");
-      // 답변은 기본 50초이며 질문마다 한 번 10초 연장할 수 있습니다.
-      setTimer(50);
+      // 답변은 기본 30초이며 질문마다 한 번 10초 연장할 수 있습니다.
+      setTimer(30);
       setAnswerExtended(false);
       answerExtendedRef.current = false;
 
@@ -415,69 +423,45 @@ function InterviewScreen({
   const handleDone = () => {
     void finishAnswer();
   };
-  const handleSubmitAnswer = async (afterRecording = false) => {
-    if (busyRef.current || !currentQuestion || currentQuestion.done || (!afterRecording && phase !== "followup")) return;
-    if (!submittedAnswerRef.current && !answerText.trim()) {
-      setQuestionError("답변 텍스트가 없어 저장하지 못했습니다. 내용을 입력한 뒤 다시 시도해 주세요.");
-      return;
-    }
+  const retryAudio = async () => {
+    if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setQuestionError("");
-    let savedSuccessfully = false;
+    let ready = false;
     try {
-      // UC-35/37: 기본 질문과 꼬리질문 모두 현재 표시된 question_id로 저장합니다.
-      if (!submittedAnswerRef.current) {
-        const saved = await submitAnswer(requireInterviewSessionId(), {
-          question_id: currentQuestion.question_id,
-          answer_text: answerText.trim(),
-        });
-        submittedAnswerRef.current = saved.answer_id;
-        if (!mountedRef.current) return;
-        setSubmittedAnswerId(saved.answer_id);
-      }
-      savedSuccessfully = true;
+      await finishAudio();
+      audioReadyRef.current = true;
+      setAudioReady(true);
+      ready = true;
     } catch (error) {
-      if (mountedRef.current) setQuestionError(error instanceof Error ? error.message : "답변 제출에 실패했습니다.");
+      setQuestionError(error instanceof Error ? error.message : "음성 처리에 실패했습니다.");
     } finally {
       busyRef.current = false;
       if (mountedRef.current) setBusy(false);
     }
-    if (savedSuccessfully && mountedRef.current) await handleNext(true);
+    if (ready && mountedRef.current) await handleNext();
   };
 
-  const handleNext = async (afterSubmission = false) => {
-    if (busyRef.current) return;
-    if (!currentQuestion || (!currentQuestion.done && ((!afterSubmission && phase !== "followup") || !submittedAnswerRef.current))) return;
+  const handleNext = async () => {
+    if (busyRef.current || !currentQuestion || (!currentQuestion.done && !audioReadyRef.current)) return;
     busyRef.current = true;
     setBusy(true);
     try {
       setQuestionError("");
-      // 기본 질문당 꼬리질문 1개를 생성합니다. 꼬리질문에서 다시 생성하지 않습니다.
-      if (currentQuestion && !currentQuestion.done && currentQuestion.question_type !== "followup") {
-        const followup = await generateFollowupQuestion(requireInterviewSessionId(), submittedAnswerRef.current!);
-        if (!mountedRef.current) return;
-        setCurrentQuestion({ ...followup, question_type: "followup", done: false });
-        submittedAnswerRef.current = null;
-        setSubmittedAnswerId(null);
-        setAnswerText("");
-        setPhase("prep");
-        setTimer(30);
-        return;
-      }
-
       // 답변 제출 상태는 서버가 관리합니다. 같은 질문을 다시 받으면 임의로 넘기지 않습니다.
       const next = currentQuestion?.done || reportResultRef.current ? { done: true as const } : await getNextQuestion(requireInterviewSessionId());
       if (!mountedRef.current) return;
       if (!next.done) {
         if (currentQuestion && !currentQuestion.done && next.question_id === currentQuestion.question_id) {
-          setQuestionError("서버가 같은 질문을 반환했습니다. 잠시 후 다시 조회해 주세요.");
+          setQuestionError("음성 분석은 완료됐지만 서버가 같은 질문을 반환했습니다. 백엔드의 답변 저장·질문 진행 처리를 확인해 주세요.");
           return;
         }
         setCurrentQuestion(next);
-        submittedAnswerRef.current = null;
-        setSubmittedAnswerId(null);
-        setAnswerText("");
+        audioReadyRef.current = false;
+        setAudioReady(false);
+        pendingRecording.current = null;
+        audioUploaded.current = false;
         setQIdx((index) => index + 1);
         setPhase("prep");
         setTimer(30);
@@ -602,21 +586,6 @@ function InterviewScreen({
             </div>
           </Card>
 
-          {(phase === "answering" || phase === "followup") && currentQuestion && !currentQuestion.done && (
-            <div className="p-4 space-y-3">
-              <p className="font-semibold">{currentQuestion.question}</p>
-              <label className="block" htmlFor="answer-text">제출할 답변 내용</label>
-              <p className="text-sm text-muted-foreground">음성의 텍스트 변환은 아직 연결되지 않았습니다. 답변 내용을 입력하면 답변 완료 후 저장하고 다음 질문으로 이동합니다.</p>
-              <textarea id="answer-text" rows={5} className="w-full border p-3 rounded-xl" value={answerText}
-                disabled={busy || submittedAnswerId !== null} onChange={(event) => setAnswerText(event.target.value)} />
-              {submittedAnswerId !== null && <p role="status">답변이 저장되었습니다.</p>}
-              {phase === "followup" && submittedAnswerId === null && (
-                <Button disabled={busy} onClick={() => void handleSubmitAnswer()}>
-                  {busy ? "처리 중..." : "답변 저장 후 다음 질문"}
-                </Button>
-              )}
-            </div>
-          )}
           {questionError && <div role="alert" className="p-4 text-red-600">{questionError}</div>}
           {phase === "prep" && questionError && (
             <div className="flex gap-3">
@@ -676,14 +645,14 @@ function InterviewScreen({
                 <Check className="w-5 h-5" /> 답변 완료
               </Button>
             )}
-            {phase === "followup" && currentQuestion && !currentQuestion.done && submittedAnswerId !== null && (
+            {phase === "followup" && currentQuestion && !currentQuestion.done && (
               <Button
-                onClick={() => void handleNext()}
+                onClick={() => void (audioReady ? handleNext() : retryAudio())}
                 disabled={busy}
                 size="lg"
                 className="px-10"
               >
-                {busy ? "질문 불러오는 중..." : "다음 질문"}{" "}
+                {busy ? "처리 중..." : audioReady ? "다음 질문 다시 조회" : "음성 전송 다시 시도"}{" "}
                 <ChevronRight className="w-5 h-5" />
               </Button>
             )}
