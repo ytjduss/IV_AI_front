@@ -10,6 +10,7 @@ from "../type/screen";
 
 function NavBar({ currentScreen, onNavigate }: { currentScreen: Screen; onNavigate: (s: Screen) => void }) {
   const [open, setOpen] = useState(false);
+  const hasLoginToken = Boolean(localStorage.getItem("access_token"));
   return (
     <nav className="sticky top-0 z-50 bg-card/95 backdrop-blur border-b border-border">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
@@ -54,7 +55,7 @@ function NavBar({ currentScreen, onNavigate }: { currentScreen: Screen; onNaviga
             </div>
           )}
         </div>
-          {(currentScreen === "main" || currentScreen === "login") && (
+          {!hasLoginToken && (currentScreen === "main" || currentScreen === "login") && (
             <div className="flex items-center gap-1 sm:gap-3">
               <button onClick={() => onNavigate("login")} className="px-2 sm:px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-primary whitespace-nowrap">로그인</button>
               <button onClick={() => onNavigate("signup")} className="px-3 sm:px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold whitespace-nowrap">회원가입</button>
