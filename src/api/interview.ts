@@ -99,3 +99,25 @@ export async function submitAnswer(sessionId: string, payload: SubmitAnswerPaylo
   }
   return result;
 }
+
+// 화면의 직무 이름과 서버 식별자를 분리합니다. 배열 순서로 ID를 추측하지 않습니다.
+export async function resolveJobId(name: string): Promise<number> {
+  const response = await authenticatedRequest<unknown>(
+    "/interview/jobs", {}, undefined, AUTH_API_BASE_URL,
+  );
+  const rows = Array.isArray(response) ? response
+    : response && typeof response === "object" && "jobs" in response ? response.jobs : null;
+  if (!Array.isArray(rows)) {
+    throw new Error("직무 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  }
+  const normalize = (value: string) => value.replace(/\s+/g, "").normalize("NFC");
+  const matches = rows.filter((row) => {
+    const label = row?.job_name ?? row?.name;
+    return typeof label === "string" && normalize(label) === normalize(name);
+  });
+  const id = matches[0]?.job_id ?? matches[0]?.id;
+  if (matches.length !== 1 || !Number.isSafeInteger(id) || id <= 0) {
+    throw new Error(`선택한 직무(${name})를 서버에서 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.`);
+  }
+  return id;
+}

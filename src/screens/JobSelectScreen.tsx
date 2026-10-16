@@ -1,6 +1,6 @@
-import { createInterviewSession, type CreateSessionPayload } from "../api/interview";
+import { createInterviewSession, resolveJobId } from "../api/interview";
 import type { Screen } from "../type/screen";
-import { Badge, CheckCircle2, ChevronRight } from "lucide-react";
+import { CheckCircle2, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -14,10 +14,9 @@ function readLocal<T>(key: string, fallback: T): T {
 }
 
 function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const [selected, setSelected] = useState("");
-  const [interviewType, setInterviewType] = useState<CreateSessionPayload["interview_type"]>("technical");
-  const [difficulty, setDifficulty] = useState<CreateSessionPayload["difficulty"]>("medium");
-  const [questionCount, setQuestionCount] = useState(5);
+  const jobs = ["디자인", "정보통신", "연구개발", "공공서비스", "영업마케팅", "경영사무", "생산 관리"];
+  const [selected, setSelected] = useState("디자인");
+  const questionCount = 5;
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [createdSession, setCreatedSession] = useState<number | null>(null);
@@ -33,18 +32,14 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
   const handleCreateSession = async () => {
     if (creating) return;
-    if (!/^\d+$/.test(selected) || !Number.isSafeInteger(Number(selected)) || Number(selected) <= 0 || !Number.isSafeInteger(questionCount) || questionCount <= 0) {
-      setError("유효한 직무 ID와 질문 수를 입력해 주세요.");
-      return;
-    }
     setCreating(true);
     setError("");
     try {
       // UC-33: 세션 생성에 성공한 뒤에만 장비 테스트로 이동합니다.
       // 저장소 쓰기가 실패한 경우 이미 생성된 세션을 재사용합니다.
       const sessionId = createdSession ?? (await createInterviewSession({
-        job_id: Number(selected), interview_type: interviewType,
-        difficulty, question_count: questionCount,
+        job_id: await resolveJobId(selected), interview_type: "technical",
+        difficulty: "medium", question_count: questionCount,
       })).session_id;
       setCreatedSession(sessionId);
       sessionStorage.setItem("interviewSessionId", String(sessionId));
@@ -69,15 +64,23 @@ function JobSelectScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </h1>
         </div>
 
-        {/* 직무 목록 응답 명세가 제공되기 전에는 직무 이름에 임의 ID를 매핑하지 않습니다. */}
-        <fieldset disabled={creating || createdSession !== null} className="grid gap-5 mb-8">
-          <label>서버 직무 ID
-            <input type="number" min="1" step="1" value={selected} onChange={(event) => setSelected(event.target.value)} className="block w-full border p-3 mt-2" />
-            <span className="text-sm text-muted-foreground">/interview/jobs에서 확인한 job_id를 입력해 주세요.</span>
-          </label>
-          <label>면접 유형<select value={interviewType} onChange={(event) => setInterviewType(event.target.value as CreateSessionPayload["interview_type"])} className="block w-full border p-3 mt-2"><option value="technical">기술</option><option value="behavioral">인성</option><option value="mixed">혼합</option></select></label>
-          <label>난이도<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as CreateSessionPayload["difficulty"])} className="block w-full border p-3 mt-2"><option value="easy">쉬움</option><option value="medium">보통</option><option value="hard">어려움</option></select></label>
-          <label>질문 수<input type="number" min="1" step="1" value={questionCount} onChange={(event) => setQuestionCount(Number(event.target.value))} className="block w-full border p-3 mt-2" /></label>
+        <fieldset disabled={creating || createdSession !== null} aria-label="직무 선택" className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-12">
+          {jobs.map((job) => (
+            <button
+              type="button"
+              key={job}
+              aria-pressed={selected === job}
+              onClick={() => { setSelected(job); setError(""); }}
+              className={`min-h-44 p-6 rounded-1xl border-3 text-center transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${selected === job ? "border-primary bg-accent/60 shadow-lg shadow-primary/10" : "border-border bg-card hover:border-primary/30"}`}
+            >
+              <div className="mt-4 text-lg font-bold text-foreground">{job}</div>
+              {selected === job && (
+                <div className="mt-3 flex justify-center">
+                  <CheckCircle2 className="w-5 h-5 text-primary" />
+                </div>
+              )}
+            </button>
+          ))}
         </fieldset>
         {error && <p role="alert" className="text-red-600 mb-4">{error}</p>}
         {savedResumes.length > 0 && (

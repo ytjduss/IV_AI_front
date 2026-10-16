@@ -57,3 +57,23 @@ test('꼬리질문은 실제 answer_id를 전달하고 종료 응답은 report_i
     await assert.rejects(api.endInterviewSession('9'), /리포트 생성 실패/);
   } finally { globalThis.fetch = original; }
 });
+
+test('직무 이름으로 실제 서버 ID를 찾고 누락·중복·잘못된 ID는 거절', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      assert.equal(url, 'http://localhost:8000/interview/jobs');
+      return Response.json([{ job_id: 42, job_name: '생산관리' }]);
+    };
+    assert.equal(await api.resolveJobId('생산 관리'), 42);
+    await assert.rejects(api.resolveJobId('디자인'), /확인하지 못했습니다/);
+    globalThis.fetch = async () => Response.json({ jobs: [{ id: 17, name: '디자인' }] });
+    assert.equal(await api.resolveJobId('디자인'), 17);
+    globalThis.fetch = async () => Response.json([{ id: 1, name: '디자인' }, { id: 2, name: '디자인' }]);
+    await assert.rejects(api.resolveJobId('디자인'), /확인하지 못했습니다/);
+    globalThis.fetch = async () => Response.json([{ id: 0, name: '디자인' }]);
+    await assert.rejects(api.resolveJobId('디자인'), /확인하지 못했습니다/);
+    globalThis.fetch = async () => Response.json({ unexpected: [] });
+    await assert.rejects(api.resolveJobId('디자인'), /불러오지 못했습니다/);
+  } finally { globalThis.fetch = original; }
+});

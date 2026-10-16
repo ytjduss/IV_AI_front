@@ -1,3 +1,5 @@
+export const AUTH_API_BASE_URL = (import.meta.env.VITE_AUTH_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+
 //signup
 export const signup = async (
     email : string,
