@@ -1,3 +1,4 @@
+import { ReportList, ServerReport, selectedReportSessionId } from "../components/analysis/ServerReport";
 import { createResume, updateResume, getResume, resumeForScreen } from "../api/resume";
 import { INTERVIEW_TIPS } from "../data/interviewTips";
 import type { Screen } from "../type/screen";
@@ -11,7 +12,6 @@ import ResumeFormFields from "../components/resume/ResumeFormFields";
 import { resumeToText, getResumeFields } from "../type/resume";
 import { readLocal } from "../lib/storage";
 import { getReports } from "../lib/reports";
-import { EXAMPLE_REPORT } from "../data/exampleReport";
 import { getMyInfo, logout, type MyInfo } from "../api/auth";
 
 // 회원정보 조회 API 임시 해제. 재연결 시 true로 
@@ -91,18 +91,11 @@ export default function ManagementScreen({
     }).finally(() => { if (!controller.signal.aborted) setResumesLoading(false); });
     return () => controller.abort();
   }, [screen, resumeAttempt]);
-  const reports = getReports();
-  const entries =
-    screen === "reports" || screen === "report-detail"
-      ? [
-          ...reports.filter((item) => item.id !== EXAMPLE_REPORT.id),
-          EXAMPLE_REPORT,
-        ]
-      : reports;
-  const selectedId = sessionStorage.getItem("iv-selected-report");
-  const selected = selectedId
-    ? entries.find((item) => item.id === selectedId)
-    : entries[0];
+  const entries = getReports();
+  const openServerReport = (sessionId: number) => {
+    sessionStorage.setItem("iv-report-session-id", String(sessionId));
+    onNavigate("report-detail");
+  };
   const fieldClass =
     "w-full border border-border rounded-none px-4 py-3 bg-white mt-2";
   const navigateReport = (entry: any, destination: Screen) => {
@@ -541,130 +534,19 @@ export default function ManagementScreen({
         </Card>
       )}
       {screen === "reports" && (
-        <section aria-label="리포트 목록">
-          <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
-            <h2 className="font-bold">전체 {entries.length}건</h2>
-            <Button onClick={() => onNavigate("tips")}>
-              면접 TIP
-            </Button>
+        <>
+          <div className="flex justify-end mb-6">
+            <Button onClick={() => onNavigate("tips")}>면접 TIP</Button>
           </div>
-          <div className="space-y-6">
-            {entries.map((entry) => (
-              <Card key={entry.id} className="p-6 sm:p-8">
-                <Badge>
-                  {entry.id === EXAMPLE_REPORT.id ? "예시 리포트" : "REPORT"}
-                </Badge>
-                <h2 className="text-xl sm:text-2xl font-bold mt-4">
-                  {new Date(entry.date).toLocaleDateString("ko-KR", {
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric",
-                  })}
-                </h2>
-                <p className="text-sm text-muted-foreground mt-3">
-                  {new Date(entry.date).toLocaleTimeString("ko-KR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </p>
-                <div className="grid sm:grid-cols-3 gap-4 my-6">
-                  {[
-                    ["질문 수", entry.id === EXAMPLE_REPORT.id ? "2개" : "1개"],
-                    [
-                      "시선 안정성",
-                      entry.analysis?.gazeStability == null
-                        ? "측정 데이터 없음"
-                        : `${entry.analysis.gazeStability}%`,
-                    ],
-                    [
-                      "상태",
-                      entry.id === EXAMPLE_REPORT.id
-                        ? "예시 데이터"
-                        : "저장 완료",
-                    ],
-                  ].map(([label, value]) => (
-                    <div key={label} className="bg-muted/60 p-5 rounded-none">
-                      <p className="text-sm text-muted-foreground">{label}</p>
-                      <p className="font-bold text-lg mt-2">{value}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button onClick={() => navigateReport(entry, "dashboard")}>
-                    전체 분석 결과 조회
-                  </Button>
-                  <Button
-                    onClick={() => navigateReport(entry, "question-analysis")}
-                  >
-                    질문별 상세 분석
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </section>
+          <ReportList onSelect={openServerReport} />
+        </>
       )}
       {screen === "report-detail" && (
         <>
           <Button className="mb-5" onClick={() => onNavigate("reports")}>
             리포트 목록으로 돌아가기
           </Button>
-          {selected ? (
-            <Card className="p-8">
-              
-              <h2 className="text-2xl font-bold mt-4">{selected.title}</h2>
-              <p className="text-muted-foreground mt-3">
-                {new Date(selected.date).toLocaleString("ko-KR")}
-              </p>
-              <div className="grid sm:grid-cols-3 gap-5 my-8">
-                {[
-                  [
-                    "질문 수",
-                    selected.id === EXAMPLE_REPORT.id ? "2개" : "1개",
-                  ],
-                  [
-                    "시선 안정성",
-                    selected.analysis?.gazeStability == null
-                      ? "측정 데이터 없음"
-                      : `${selected.analysis.gazeStability}%`,
-                  ],
-                  ["상태", "저장 완료"],
-                ].map(([label, value]) => (
-                  <div key={label} className="bg-muted/60 p-5 rounded-none">
-                    <p className="text-sm text-muted-foreground">{label}</p>
-                    <p className="font-bold text-lg mt-2">{value}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  onClick={() => {
-                    sessionStorage.setItem(
-                      "interviewAnalysis",
-                      JSON.stringify(selected.analysis),
-                    );
-                    sessionStorage.setItem("iv-current-id", selected.id);
-                    onNavigate("dashboard");
-                  }}
-                >
-                  전체 분석 결과 조회
-                </Button>
-                <Button onClick={() => onNavigate("question-analysis")}>
-                  질문별 상세 분석
-                </Button>
-                <Button onClick={() => onNavigate("tips")}>면접 TIP</Button>
-              </div>
-            </Card>
-          ) : (
-            <Card className="p-16 text-center">
-              <h2 className="text-xl font-bold">
-                조회할 이전 면접 기록이 없습니다
-              </h2>
-              <p className="text-muted-foreground mt-3">
-                면접을 완료하면 이곳에서 리포트를 확인할 수 있어요.
-              </p>
-            </Card>
-          )}
+          <ServerReport sessionId={selectedReportSessionId()} />
         </>
       )}
     </main>

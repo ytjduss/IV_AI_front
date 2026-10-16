@@ -1,3 +1,4 @@
+import { MicrophoneTest } from "../components/MicrophoneTest";
 import { requireInterviewSessionId } from "../lib/interviewSession";
 import { healthCheck } from "../api/health";
 import type { Screen } from "../type/screen";
@@ -65,8 +66,6 @@ function DeviceTestScreen({
   const [calibrationMetrics, setCalibrationMetrics] = useState<
     Array<{ label: string; value: number }>
   >([]);
-  const [micLevel, setMicLevel] = useState(0);
-  const [ambientLevel, setAmbientLevel] = useState(0);
   const [visionStatus, setVisionStatus] = useState("카메라 연결 중");
   const [frameCount, setFrameCount] = useState(0);
   const [outline, setOutline] = useState<BodyOutline | null>(null);
@@ -136,14 +135,8 @@ function DeviceTestScreen({
   useEffect(() => {
     let mediaStream: MediaStream | null = null;
     let disposed = false;
-    let audioContext: AudioContext | null = null;
-    let animationFrame = 0;
-    let ambientTimer = 0;
-    let ambientCollecting = true;
-    const ambientSamples: number[] = [];
-
     navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
+      .getUserMedia({ video: true, audio: false })
       .then((stream) => {
         if (disposed) {
           stream.getTracks().forEach((track) => track.stop());
@@ -151,7 +144,6 @@ function DeviceTestScreen({
         }
         mediaStream = stream;
         const videoTrack = stream.getVideoTracks()[0];
-        const audioTrack = stream.getAudioTracks()[0];
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
@@ -171,63 +163,15 @@ function DeviceTestScreen({
             );
           };
         }
-        setMicOk(
-          Boolean(
-            audioTrack &&
-            audioTrack.readyState === "live" &&
-            audioTrack.enabled,
-          ),
-        );
-
-        audioContext = new AudioContext();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.65;
-        source.connect(analyser);
-        const samples = new Uint8Array(analyser.fftSize);
-
-        const measureAudio = () => {
-          analyser.getByteTimeDomainData(samples);
-          let sumSquares = 0;
-          for (const value of samples) {
-            const normalized = (value - 128) / 128;
-            sumSquares += normalized * normalized;
-          }
-          const rms = Math.sqrt(sumSquares / samples.length);
-          const decibels = 20 * Math.log10(Math.max(rms, 0.00001));
-          const level = Math.max(
-            0,
-            Math.min(100, ((decibels + 60) / 60) * 100),
-          );
-          setMicLevel(level);
-          if (ambientCollecting) ambientSamples.push(level);
-          animationFrame = requestAnimationFrame(measureAudio);
-        };
-        measureAudio();
-
-        ambientTimer = window.setTimeout(() => {
-          ambientCollecting = false;
-          const average = ambientSamples.length
-            ? ambientSamples.reduce((sum, value) => sum + value, 0) /
-              ambientSamples.length
-            : 100;
-          setAmbientLevel(Math.round(average));
-          setNoiseOk(average < 35);
-        }, 3000);
       })
       .catch(() => {
         if (disposed) return;
         setCameraOk(false);
-        setMicOk(false);
-        setVisionStatus("카메라·마이크 권한을 허용해 주세요");
+        setVisionStatus("카메라 권한을 허용해 주세요");
       });
 
     return () => {
       disposed = true;
-      window.clearTimeout(ambientTimer);
-      cancelAnimationFrame(animationFrame);
-      void audioContext?.close();
       mediaStream?.getTracks().forEach((track) => track.stop());
     };
   }, []);
@@ -520,19 +464,7 @@ function DeviceTestScreen({
             </Card>
 
             <Card className="p-4">
-              <h3 className="font-bold text-foreground mb-3">
-                마이크 음량 테스트
-              </h3>
-              <div className="h-3 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-primary to-emerald-400 rounded-full transition-all duration-100"
-                  style={{ width: `${micLevel}%` }}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                실제 마이크 입력입니다. 주변 소음 측정값: {ambientLevel}% · 측정
-                시간 동안 조용히 있어주세요.
-              </p>
+              <MicrophoneTest onMicStatus={setMicOk} onNoiseStatus={setNoiseOk} />
             </Card>
           </div>
         </div>
