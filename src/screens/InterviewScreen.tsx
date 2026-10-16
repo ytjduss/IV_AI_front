@@ -296,7 +296,7 @@ function InterviewScreen({
     setPhase("followup");
     busyRef.current = false;
     setBusy(false);
-    
+    await handleSubmitAnswer(true);
   };
 
   useEffect(() => {
@@ -415,15 +415,16 @@ function InterviewScreen({
   const handleDone = () => {
     void finishAnswer();
   };
-  const handleSubmitAnswer = async () => {
-    if (busyRef.current || !currentQuestion || currentQuestion.done || phase !== "followup") return;
+  const handleSubmitAnswer = async (afterRecording = false) => {
+    if (busyRef.current || !currentQuestion || currentQuestion.done || (!afterRecording && phase !== "followup")) return;
     if (!submittedAnswerRef.current && !answerText.trim()) {
-      setQuestionError("제출할 답변 내용을 입력해 주세요.");
+      setQuestionError("답변 텍스트가 없어 저장하지 못했습니다. 내용을 입력한 뒤 다시 시도해 주세요.");
       return;
     }
     busyRef.current = true;
     setBusy(true);
     setQuestionError("");
+    let savedSuccessfully = false;
     try {
       // UC-35/37: 기본 질문과 꼬리질문 모두 현재 표시된 question_id로 저장합니다.
       if (!submittedAnswerRef.current) {
@@ -435,17 +436,19 @@ function InterviewScreen({
         if (!mountedRef.current) return;
         setSubmittedAnswerId(saved.answer_id);
       }
+      savedSuccessfully = true;
     } catch (error) {
       if (mountedRef.current) setQuestionError(error instanceof Error ? error.message : "답변 제출에 실패했습니다.");
     } finally {
       busyRef.current = false;
       if (mountedRef.current) setBusy(false);
     }
+    if (savedSuccessfully && mountedRef.current) await handleNext(true);
   };
 
-  const handleNext = async () => {
+  const handleNext = async (afterSubmission = false) => {
     if (busyRef.current) return;
-    if (!currentQuestion || (!currentQuestion.done && (phase !== "followup" || !submittedAnswerRef.current))) return;
+    if (!currentQuestion || (!currentQuestion.done && ((!afterSubmission && phase !== "followup") || !submittedAnswerRef.current))) return;
     busyRef.current = true;
     setBusy(true);
     try {
@@ -481,6 +484,10 @@ function InterviewScreen({
         return;
       }
       setCurrentQuestion(next);
+      if (!currentQuestion?.done) {
+        setPhase("prep");
+        return;
+      }
 
       await trackingRef.current?.stop();
       // UC-38: 분석 저장소를 비우는 비전·오디오 종료보다 리포트 생성을 먼저 실행합니다.
@@ -595,17 +602,17 @@ function InterviewScreen({
             </div>
           </Card>
 
-          {phase === "followup" && currentQuestion && !currentQuestion.done && (
+          {(phase === "answering" || phase === "followup") && currentQuestion && !currentQuestion.done && (
             <div className="p-4 space-y-3">
               <p className="font-semibold">{currentQuestion.question}</p>
               <label className="block" htmlFor="answer-text">제출할 답변 내용</label>
-              <p className="text-sm text-muted-foreground">음성 자동 변환은 아직 연결되지 않았습니다. 방금 말한 답변을 입력하거나 변환된 텍스트를 붙여넣어 주세요.</p>
+              <p className="text-sm text-muted-foreground">음성의 텍스트 변환은 아직 연결되지 않았습니다. 답변 내용을 입력하면 답변 완료 후 저장하고 다음 질문으로 이동합니다.</p>
               <textarea id="answer-text" rows={5} className="w-full border p-3 rounded-xl" value={answerText}
                 disabled={busy || submittedAnswerId !== null} onChange={(event) => setAnswerText(event.target.value)} />
               {submittedAnswerId !== null && <p role="status">답변이 저장되었습니다.</p>}
-              {(submittedAnswerId === null) && (
-                <Button disabled={busy} onClick={handleSubmitAnswer}>
-                  {busy ? "처리 중..." : "답변 제출"}
+              {phase === "followup" && submittedAnswerId === null && (
+                <Button disabled={busy} onClick={() => void handleSubmitAnswer()}>
+                  {busy ? "처리 중..." : "답변 저장 후 다음 질문"}
                 </Button>
               )}
             </div>
@@ -617,7 +624,7 @@ function InterviewScreen({
               <Button variant="outline" onClick={() => onNavigate("job-select")}>새 면접 시작</Button>
             </div>
           )}
-          {currentQuestion?.done && <Button disabled={busy} onClick={handleNext}>{busy ? "리포트 생성 중..." : "면접 종료 및 리포트 생성"}</Button>}
+          {currentQuestion?.done && <Button disabled={busy} onClick={() => void handleNext()}>{busy ? "리포트 생성 중..." : "면접 종료 및 리포트 생성"}</Button>}
           {/* Controls */}
           <div className="flex items-center justify-center gap-3">
             <button
@@ -671,7 +678,7 @@ function InterviewScreen({
             )}
             {phase === "followup" && currentQuestion && !currentQuestion.done && submittedAnswerId !== null && (
               <Button
-                onClick={handleNext}
+                onClick={() => void handleNext()}
                 disabled={busy}
                 size="lg"
                 className="px-10"
