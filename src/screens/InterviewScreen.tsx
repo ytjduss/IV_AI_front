@@ -1,5 +1,5 @@
 import { submitAnswer, generateFollowupQuestion, endInterviewSession, getNextQuestion, type NextQuestion } from "../api/interview";
-import { requireInterviewSessionId } from "../lib/interviewSession";
+import { requireInterviewSessionId, clearCompletedSession, requireInitialQuestion } from "../lib/interviewSession";
 import { Camera, CameraOff, Check, ChevronRight, Clock } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Card } from "../components/ui/card";
@@ -87,9 +87,10 @@ function InterviewScreen({
   useEffect(() => {
     const controller = new AbortController();
     setQuestionLoading(true);
+    setCurrentQuestion(null);
     setQuestionError("");
     Promise.resolve().then(() => getNextQuestion(requireInterviewSessionId(), controller.signal))
-      .then((question) => { if (!controller.signal.aborted) setCurrentQuestion(question); })
+      .then((question) => { if (!controller.signal.aborted) setCurrentQuestion(requireInitialQuestion(question)); })
       .catch((error) => { if (!controller.signal.aborted) setQuestionError(error instanceof Error ? error.message : "질문 조회에 실패했습니다."); })
       .finally(() => { if (!controller.signal.aborted) setQuestionLoading(false); });
     return () => controller.abort();
@@ -362,7 +363,7 @@ function InterviewScreen({
       if (!camOff) await visionApi.startAnswer(sessionIdRef.current);
 
       //녹음 시작
-      const stream =
+      stream =
       await navigator.mediaDevices.getUserMedia({
         audio: true,
       });
@@ -395,12 +396,18 @@ function InterviewScreen({
       startVisionTracking();
     } catch (error) {
       answerActiveRef.current = false;
+      stream?.getTracks().forEach((track) => track.stop());
+      setRecording(false);
+      setPhase("prep");
 
     setPoseStatus(
       error instanceof Error
         ? error.message
         : "답변 시작에 실패했습니다.",
     );
+  } finally {
+    busyRef.current = false;
+    if (mountedRef.current) setBusy(false);
   }
 };
 
@@ -428,19 +435,8 @@ function InterviewScreen({
         if (!mountedRef.current) return;
         setSubmittedAnswerId(saved.answer_id);
       }
-      // 기본 질문당 꼬리질문 1개를 생성합니다. 꼬리질문에서 다시 생성하지 않습니다.
-      if (currentQuestion.question_type !== "followup") {
-        const followup = await generateFollowupQuestion(requireInterviewSessionId(), submittedAnswerRef.current);
-        if (!mountedRef.current) return;
-        setCurrentQuestion({ ...followup, question_type: "followup", done: false });
-        submittedAnswerRef.current = null;
-        setSubmittedAnswerId(null);
-        setAnswerText("");
-        setPhase("prep");
-        setTimer(30);
-      }
     } catch (error) {
-      if (mountedRef.current) setQuestionError(error instanceof Error ? error.message : "답변 제출 또는 꼬리질문 생성에 실패했습니다.");
+      if (mountedRef.current) setQuestionError(error instanceof Error ? error.message : "답변 제출에 실패했습니다.");
     } finally {
       busyRef.current = false;
       if (mountedRef.current) setBusy(false);
@@ -449,11 +445,24 @@ function InterviewScreen({
 
   const handleNext = async () => {
     if (busyRef.current) return;
-    if (!currentQuestion?.done && (currentQuestion?.question_type !== "followup" || !submittedAnswerRef.current)) return;
+    if (!currentQuestion || (!currentQuestion.done && (phase !== "followup" || !submittedAnswerRef.current))) return;
     busyRef.current = true;
     setBusy(true);
     try {
       setQuestionError("");
+      // 기본 질문당 꼬리질문 1개를 생성합니다. 꼬리질문에서 다시 생성하지 않습니다.
+      if (currentQuestion && !currentQuestion.done && currentQuestion.question_type !== "followup") {
+        const followup = await generateFollowupQuestion(requireInterviewSessionId(), submittedAnswerRef.current!);
+        if (!mountedRef.current) return;
+        setCurrentQuestion({ ...followup, question_type: "followup", done: false });
+        submittedAnswerRef.current = null;
+        setSubmittedAnswerId(null);
+        setAnswerText("");
+        setPhase("prep");
+        setTimer(30);
+        return;
+      }
+
       // 답변 제출 상태는 서버가 관리합니다. 같은 질문을 다시 받으면 임의로 넘기지 않습니다.
       const next = currentQuestion?.done || reportResultRef.current ? { done: true as const } : await getNextQuestion(requireInterviewSessionId());
       if (!mountedRef.current) return;
@@ -479,6 +488,7 @@ function InterviewScreen({
       if (!reportResultRef.current) {
         reportResultRef.current = await endInterviewSession(requireInterviewSessionId());
       }
+      clearCompletedSession(sessionIdRef.current);
       if (!mountedRef.current) return;
       // 상세 조회 URL에는 report_id가 아닌 동일한 서버 session_id를 사용합니다.
       sessionStorage.setItem("iv-report-session-id", sessionIdRef.current);
@@ -593,15 +603,20 @@ function InterviewScreen({
               <textarea id="answer-text" rows={5} className="w-full border p-3 rounded-xl" value={answerText}
                 disabled={busy || submittedAnswerId !== null} onChange={(event) => setAnswerText(event.target.value)} />
               {submittedAnswerId !== null && <p role="status">답변이 저장되었습니다.</p>}
-              {(submittedAnswerId === null || currentQuestion.question_type !== "followup") && (
+              {(submittedAnswerId === null) && (
                 <Button disabled={busy} onClick={handleSubmitAnswer}>
-                  {busy ? "처리 중..." : submittedAnswerId !== null ? "꼬리질문 생성 재시도" : "답변 제출"}
+                  {busy ? "처리 중..." : "답변 제출"}
                 </Button>
               )}
             </div>
           )}
           {questionError && <div role="alert" className="p-4 text-red-600">{questionError}</div>}
-          {phase === "prep" && questionError && <Button onClick={() => setQuestionAttempt((attempt) => attempt + 1)}>질문 다시 조회</Button>}
+          {phase === "prep" && questionError && (
+            <div className="flex gap-3">
+              <Button disabled={questionLoading} onClick={() => setQuestionAttempt((attempt) => attempt + 1)}>질문 다시 조회</Button>
+              <Button variant="outline" onClick={() => onNavigate("job-select")}>새 면접 시작</Button>
+            </div>
+          )}
           {currentQuestion?.done && <Button disabled={busy} onClick={handleNext}>{busy ? "리포트 생성 중..." : "면접 종료 및 리포트 생성"}</Button>}
           {/* Controls */}
           <div className="flex items-center justify-center gap-3">
@@ -654,14 +669,14 @@ function InterviewScreen({
                 <Check className="w-5 h-5" /> 답변 완료
               </Button>
             )}
-            {phase === "followup" && currentQuestion && !currentQuestion.done && currentQuestion.question_type === "followup" && submittedAnswerId !== null && (
+            {phase === "followup" && currentQuestion && !currentQuestion.done && submittedAnswerId !== null && (
               <Button
                 onClick={handleNext}
                 disabled={busy}
                 size="lg"
                 className="px-10"
               >
-                {"다음 질문 확인"}{" "}
+                {busy ? "질문 불러오는 중..." : "다음 질문"}{" "}
                 <ChevronRight className="w-5 h-5" />
               </Button>
             )}

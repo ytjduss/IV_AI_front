@@ -1,3 +1,4 @@
+import { requireInterviewSessionId } from "./lib/interviewSession";
 import { CAPTURE_MODE } from "./lib/captureMode";
 import { useState } from "react";
 import { NavBar } from "./components/navBar";
@@ -26,6 +27,10 @@ export default function App() {
     if (!CAPTURE_MODE && requiresLogin && !localStorage.getItem("access_token")) {
       setScreen("login");
       return;
+    }
+    if (!CAPTURE_MODE && (next === "device-test" || next === "interview")) {
+      try { requireInterviewSessionId(); }
+      catch { setScreen("job-select"); return; }
     }
     //초기화
     if (["job-select", "device-test", "interview"].includes(next)) {
