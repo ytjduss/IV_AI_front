@@ -69,7 +69,12 @@ function LoginScreen({
       );
     }
 
-    onNavigate("job-select");
+    // 로그인 화면에서 회원가입 탭을 연 경우에도 로그인 폼으로 전환합니다.
+    setEnteringResume(false);
+    setTab("login");
+    setPassword("");
+    setPasswordConfirm("");
+    onNavigate("login");
     } catch (error){
       setNotice(
         error instanceof Error ? error.message : "회원가입 실패.",
