@@ -247,3 +247,5 @@ export default function VoiceAnalysisScreen({
     </div>
   );
 }
+
+//시간 추가 - 기본 40~50초 + 10초   

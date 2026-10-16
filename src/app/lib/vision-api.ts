@@ -115,9 +115,10 @@ export const visionApi = {
     );
 
     const response = await fetch(
-      `http://localhost:8000/vision/calibrate/frame?session_id=${encodeURIComponent(sessionId)}`,
+      apiUrl("/vision/calibrate/frame", { session_id: sessionId }),
     {
       method : "POST",
+      headers: { "ngrok-skip-browser-warning": "true" },
       body : formData,
     },
     );
@@ -135,9 +136,10 @@ finalizeCalibration: async (
   signal?: AbortSignal,
 ) => {
   const response = await fetch(
-   `http://localhost:8000/vision/calibrate/finalize?session_id=${encodeURIComponent(sessionId)}`,
+   apiUrl("/vision/calibrate/finalize", { session_id: sessionId }),
     {
       method: "POST",
+      headers: { "ngrok-skip-browser-warning": "true" },
       signal,
     },
   );
@@ -177,9 +179,10 @@ gazeCheck : async (
     "gaze-frame.jpg"
   );
    const response = await fetch(
-    `http://localhost:8000/vision/gaze-check?session_id=${encodeURIComponent(sessionId)}`,
+    apiUrl("/vision/gaze-check", { session_id: sessionId }),
     {
       method: "POST",
+      headers: { "ngrok-skip-browser-warning": "true" },
       body: formData,
       signal,
     },
@@ -201,9 +204,10 @@ poseCheck: async (
   formData.append("file", file, "pose-frame.jpg");
 
   const response = await fetch(
-    `http://localhost:8000/vision/check?session_id=${encodeURIComponent(sessionId)}`,
+    apiUrl("/vision/check", { session_id: sessionId }),
     {
       method: "POST",
+      headers: { "ngrok-skip-browser-warning": "true" },
       body: formData,
       signal,
     },
@@ -232,9 +236,10 @@ startAnswer: async (
   signal?: AbortSignal,
 ) => {
   const response = await fetch(
-    `http://localhost:8000/vision/answer/start?session_id=${encodeURIComponent(sessionId)}`,
+    apiUrl("/vision/answer/start", { session_id: sessionId }),
     {
       method: "POST",
+      headers: { "ngrok-skip-browser-warning": "true" },
       signal,
     },
   );
@@ -255,9 +260,10 @@ summarizeAnswer: async (
   signal?: AbortSignal,
 ) => {
   const response = await fetch(
-    `http://localhost:8000/vision/answer/summary?session_id=${encodeURIComponent(sessionId)}`,
+    apiUrl("/vision/answer/summary", { session_id: sessionId }),
     {
       method: "POST",
+      headers: { "ngrok-skip-browser-warning": "true" },
       signal,
     },
   );
@@ -277,9 +283,10 @@ endSession: async (
   signal?: AbortSignal,
 ) => {
   const response = await fetch(
-    `http://localhost:8000/vision/end-session?session_id=${encodeURIComponent(sessionId)}`,
+    apiUrl("/vision/end-session", { session_id: sessionId }),
     {
       method: "POST",
+      headers: { "ngrok-skip-browser-warning": "true" },
       signal,
     },
   );

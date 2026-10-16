@@ -1,4 +1,4 @@
-export const AUTH_API_BASE_URL = (import.meta.env.VITE_AUTH_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+export const AUTH_API_BASE_URL = (import.meta.env.VITE_AUTH_API_BASE_URL || import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
 //signup
 export const signup = async (
@@ -7,10 +7,11 @@ export const signup = async (
 ) =>
 {
     const response = await fetch(
-        "http://localhost:8000/auth/signup",
+        `${AUTH_API_BASE_URL}/auth/signup`,
         {
             method : "POST",
        headers: {
+        "ngrok-skip-browser-warning": "true",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -39,10 +40,11 @@ export const login = async (
   password: string,
 ) => {
   const response = await fetch(
-    "http://localhost:8000/auth/login",
+    `${AUTH_API_BASE_URL}/auth/login`,
     {
       method: "POST",
       headers: {
+        "ngrok-skip-browser-warning": "true",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -70,10 +72,11 @@ export const logout = async () => {
     const token = localStorage.getItem("access_token");
 
     const response = await fetch(
-    "http://localhost:8000/auth/logout",
+    `${AUTH_API_BASE_URL}/auth/logout`,
     {
       method: "POST",
       headers: {
+        "ngrok-skip-browser-warning": "true",
         Authorization: `Bearer ${token}`,
       },
     },  
@@ -91,10 +94,12 @@ export const getMyInfo = async (signal: AbortSignal) => {
   const token = localStorage.getItem("access_token");
 
   const response = await fetch(
-    "http://localhost:8000/auth/me",
+    `${AUTH_API_BASE_URL}/auth/me`,
     {
       method: "GET",
+      signal,
       headers: {
+        "ngrok-skip-browser-warning": "true",
         Authorization: `Bearer ${token}`,
       },
     },
@@ -128,10 +133,11 @@ export const updateMyInfo = async (data: {
   const token = localStorage.getItem("access_token");
 
   const response = await fetch(
-    "http://localhost:8000/auth/me",
+    `${AUTH_API_BASE_URL}/auth/me`,
     {
       method: "PATCH",
       headers: {
+        "ngrok-skip-browser-warning": "true",
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
@@ -157,10 +163,11 @@ export const getMySessions = async () => {
   const token = localStorage.getItem("access_token");
 
   const response = await fetch(
-    "http://localhost:8000/auth/me/sessions",
+    `${AUTH_API_BASE_URL}/auth/me/sessions`,
     {
       method: "GET",
       headers: {
+        "ngrok-skip-browser-warning": "true",
         Authorization: `Bearer ${token}`,
       },
     },
@@ -184,10 +191,11 @@ export const deleteAccount = async () => {
   const token = localStorage.getItem("access_token");
 
   const response = await fetch(
-    "http://localhost:8000/auth/me",
+    `${AUTH_API_BASE_URL}/auth/me`,
     {
       method: "DELETE",
       headers: {
+        "ngrok-skip-browser-warning": "true",
         Authorization: `Bearer ${token}`,
       },
     },

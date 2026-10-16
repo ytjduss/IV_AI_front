@@ -27,7 +27,7 @@ export default function App() {
       setScreen("login");
       return;
     }
-    // 새 면접 결과 화면에 이전에 선택한 서버 리포트가 남지 않도록 초기화합니다.
+    //초기화
     if (["job-select", "device-test", "interview"].includes(next)) {
       sessionStorage.removeItem("iv-report-session-id");
     }
