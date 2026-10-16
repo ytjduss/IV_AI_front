@@ -132,16 +132,24 @@ function LoginScreen({
             </div>
 
             <div className="flex flex-col gap-4">
-              {tab === "signup" && <Input label="이름" placeholder="홍길동" />}
+              {tab === "signup" && <Input label="이름" placeholder="홍길동" name="name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} />}
               <Input
                 label="이메일"
                 type="email"
                 placeholder="example@email.com"
+                name="email"
+                autoComplete="username"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
               />
-              <Input label="비밀번호" type="password" placeholder="••••••••" />
+              <Input label="비밀번호" type="password" placeholder="••••••••" name="password" autoComplete={tab === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} />
               {tab === "signup" && (
                 <Input
                   label="비밀번호 확인"
+                  name="passwordConfirm"
+                  autoComplete="new-password"
+                  value={passwordConfirm}
+                  onChange={(event) => setPasswordConfirm(event.target.value)}
                   type="password"
                   placeholder="••••••••"
                 />

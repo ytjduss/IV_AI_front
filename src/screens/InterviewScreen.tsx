@@ -49,6 +49,8 @@ function InterviewScreen({
   const [camOff, setCamOff] = useState(initialCameraOff);
   const [guide, setGuide] = useState(true);
   const [timer, setTimer] = useState(30);
+  const [answerExtended, setAnswerExtended] = useState(false);
+  const answerExtendedRef = useRef(false);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -384,7 +386,10 @@ function InterviewScreen({
       //화면 상태
       setRecording(true);
       setPhase("answering");
-      setTimer(90);
+      // 답변은 기본 50초이며 질문마다 한 번 10초 연장할 수 있습니다.
+      setTimer(50);
+      setAnswerExtended(false);
+      answerExtendedRef.current = false;
 
       //자세·시선 추적 시작
       startVisionTracking();
@@ -624,6 +629,20 @@ function InterviewScreen({
                 className="px-10"
               >
                 답변 시작
+              </Button>
+            )}
+            {phase === "answering" && (
+              <Button
+                variant="outline"
+                disabled={busy || timer <= 0 || answerExtended}
+                onClick={() => {
+                  if (busyRef.current || !answerActiveRef.current || timer <= 0 || answerExtendedRef.current) return;
+                  answerExtendedRef.current = true;
+                  setAnswerExtended(true);
+                  setTimer((remaining) => remaining > 0 ? remaining + 10 : 0);
+                }}
+              >
+                {answerExtended ? "10초 연장 완료" : "10초 연장"}
               </Button>
             )}
             {phase === "answering" && (
