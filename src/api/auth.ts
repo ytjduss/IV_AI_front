@@ -1,3 +1,5 @@
+import { readAuthResponse } from "./authResponse";
+
 export const AUTH_API_BASE_URL = (import.meta.env.VITE_AUTH_API_BASE_URL || import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
 //signup
@@ -21,7 +23,7 @@ export const signup = async (
     },
   );
 
-  const data = await response.json();
+  const data = await readAuthResponse(response);
 
   if (!response.ok) {
     throw new Error(
@@ -54,7 +56,7 @@ export const login = async (
     },
   );
 
-  const data = await response.json();
+  const data = await readAuthResponse(response);
 
   if (!response.ok) {
     throw new Error(
@@ -86,7 +88,7 @@ export const logout = async () => {
     throw new Error("로그아웃 요청에 실패했습니다.");
   }
 
-  return response.json().catch(() => null);
+  return readAuthResponse(response);
 };
 
 //me
@@ -105,7 +107,7 @@ export const getMyInfo = async (signal: AbortSignal) => {
     },
   );
 
-  const data = await response.json();
+  const data = await readAuthResponse(response);
 
   if (!response.ok) {
     throw new Error(
@@ -145,7 +147,7 @@ export const updateMyInfo = async (data: {
     },
   );
 
-  const result = await response.json();
+  const result = await readAuthResponse(response);
 
   if (!response.ok) {
     throw new Error(
@@ -173,7 +175,7 @@ export const getMySessions = async () => {
     },
   );
 
-  const data = await response.json();
+  const data = await readAuthResponse(response);
 
   if (!response.ok) {
     throw new Error(
@@ -201,7 +203,7 @@ export const deleteAccount = async () => {
     },
   );
 
-  const data = await response.json().catch(() => null);
+  const data = await readAuthResponse(response);
 
   if (!response.ok) {
     throw new Error(

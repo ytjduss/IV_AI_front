@@ -1,6 +1,6 @@
 import type { Screen } from "../type/screen";
 import { ChevronRight, Video } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -27,21 +27,13 @@ function LoginScreen({
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   
-  const credentialsRef = useRef<HTMLDivElement>(null);
-  // 자동 완성 등으로 React 이벤트가 발생하지 않아도 실제 입력값으로 제출합니다.
-  const readCredentials = () => {
-    const read = (field: string) => credentialsRef.current?.querySelector<HTMLInputElement>(`input[name="${field}"]`)?.value ?? "";
-    return { email: read("email").trim(), password: read("password"), passwordConfirm: read("passwordConfirm") };
-  };
-
   //회원가입 
   const handleSignup = async (skipResume = false) => {
-    const { email, password, passwordConfirm } = readCredentials();
     setNotice("");
 
-     if (!email || !password)
+     if (!email.trim() || !password.trim())
     {
-      setNotice(!email ? "이메일 입력칸이 비어 있습니다." : "비밀번호 입력칸이 비어 있습니다.");
+      setNotice("이메일과 비밀번호를 입력해 주세요.");
       return;
     }
 
@@ -85,7 +77,7 @@ function LoginScreen({
     onNavigate("login");
     } catch (error){
       setNotice(
-        error instanceof Error ? `회원가입 처리 실패: ${error.message}` : "회원가입 실패.",
+        error instanceof Error ? error.message : "회원가입 실패.",
       );
     }
   };
@@ -93,10 +85,9 @@ function LoginScreen({
   //로그인
   const handleLogin = async () => 
   {
-    const { email, password } = readCredentials();
     setNotice("");
 
-    if (!email || !password)
+    if (!email.trim() || !password.trim())
     {
       setNotice("아이디 또는 비밀번호를 입력해주세요.");
       return;
@@ -145,7 +136,7 @@ function LoginScreen({
               ))}
             </div>
 
-            <div ref={credentialsRef} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4">
               {tab === "signup" && <Input label="이름" placeholder="홍길동" name="name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} />}
               <Input
                 label="이메일"
@@ -236,7 +227,6 @@ function LoginScreen({
               {notice}
             </p>
           )}
-          <p className="mt-4 text-xs text-muted-foreground text-center">화면 버전 · 인증 3</p>
         </Card>
       </div>
     </div>
