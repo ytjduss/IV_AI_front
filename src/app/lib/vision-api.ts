@@ -134,7 +134,7 @@ export const visionApi = {
 finalizeCalibration: async (
   sessionId : string,
   signal?: AbortSignal,
-) => {
+): Promise<CalibrationFinalizeResult> => {
   const response = await fetch(
    apiUrl("/vision/calibrate/finalize", { session_id: sessionId }),
     {
@@ -162,7 +162,8 @@ finalizeCalibration: async (
       "캘리브레이션 기준 자세 확정에 실패.",
     );
    }
-  return data.baseline;
+  // requireBaseline에서 success/reason과 baseline을 함께 검증합니다.
+  return data;
 },
 //시선 체크
 gazeCheck : async (
